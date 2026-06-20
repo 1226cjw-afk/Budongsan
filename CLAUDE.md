@@ -21,7 +21,7 @@
   정책 변경 시 수동 업데이트 (규칙 출처·시행일을 주석으로 남길 것)
 
 ## 핵심 기능 (목표)
-1. **지도 + 실거래가** — 지도 위 위치별 실거래 매물대 표시  ← **현재 MVP**
+1. **지도 + 실거래가** — 지도 위 위치별 실거래 매물대 표시
 2. **대출 계산/비교** — 자산·LTV·DSR 입력 → 대출 가능액/가능여부, 정책 반영 비교 화면
 3. **즐겨찾기 + 자동 업데이트** — 관심 위치 저장, 실거래가 주기적 자동 갱신
 
@@ -33,11 +33,15 @@
 
 ## 개발 메모
 - 실행: `npm run dev` → http://localhost:3000 (카카오 디벨로퍼스에 이 도메인 등록돼 있어야 지도 뜸)
-- 구조: App Router. 지도는 `app/components/KakaoMap.js`(클라이언트, SDK `autoload=false`로 동적 로드). 실거래가 마커는 여기에 추가
+- 구조: App Router. 지도/세부패널은 `app/components/KakaoMap.js`(클라이언트, SDK `autoload=false`로 동적 로드)
+- 코드 위치: `app/lib/`에 로직 집중 — `trades.js`(수집·지오코딩·캐시 공용), `regions.js`(서울25+경기41 + 지오코딩 지역검증), `loanPolicy.js`(LTV/DSR). API: `/api/trades`(N개월 병합), `/api/trend`(월별 추세), `/api/favorites`(CRUD)
 - 스택 버전: Next.js 16 + React 19 (수동 스캐폴딩, `create-next-app` 미사용 — 기존 .md 파일 충돌 회피)
 - 변경 검증: `npx next build` (컴파일/타입). `next lint --file` 옵션은 없음.
 - API 동작 확인: `npm run dev`(백그라운드) → 로그 "Ready" 대기 → `curl "http://localhost:3000/api/trades?lawdCd=11680&dealYmd=202605"`
 - ⚠️ Git Bash에서 `curl -o /tmp/x` 한 파일을 node가 못 읽음(win 경로 불일치) → 응답은 **stdin 파이프**나 cwd 상대경로로 받을 것
+- ⚠️ dev 서버 좀비: 새 `npm run dev`가 "Another next dev server is already running"으로 죽으면 stale 프로세스가 락 점유 → PowerShell `Get-CimInstance Win32_Process -Filter "Name='node.exe'" | ?{$_.CommandLine -match 'next'} | %{Stop-Process $_.ProcessId -Force}` 로 정리 (bash `pkill -f next`는 불안정)
+- ⚠️ 한글 인자 API 테스트는 bash `curl`로 금지(명령줄 UTF-8 깨져 DB에 깨진 값 저장) → `node -e`의 `fetch`+`encodeURIComponent` 사용
+- 지도: SDK URL에 `&libraries=services` 필요. 좌표→지역은 `geocoder.coord2RegionCode`(대문자 R·C, 오타 주의)
 - `/api/trades`는 단지별 `trades[]`(area 포함) 전체 반환 → 면적 등 추가 필터는 재요청 없이 클라(`KakaoMap.js`의 `renderMarkers`)에서 처리
 
 ## 작업 규칙
@@ -51,4 +55,4 @@
 - 키 **새 형식**: `sb_publishable_`(클라, `NEXT_PUBLIC_`) / `sb_secret_`(서버, RLS 우회). 둘 다 `.env.local`.
 - MCP는 secret 키 아님 → **Personal Access Token(`sbp_`)** 필요. `.mcp.json`(gitignore)에 저장, 적용엔 Claude 재시작.
 - 테이블 생성(DDL)은 secret 키로 HTTP 불가 → 대시보드 **SQL Editor**에서 실행, `supabase/migrations/`에 보관.
-- 실거래 캐시: `trade_cache`(PK `lawd_cd`+`deal_ymd`, `payload` jsonb). 이번달 12h TTL/지난달 영구, `?refresh=1` 강제 갱신.
+- 캐시: `trade_raw_cache`(월별 원본거래, 이번달 12h TTL) + `geocode_cache`(단지 좌표) + `favorites`. 구 `trade_cache`(geocoded payload)는 미사용. 지오코딩은 `geocodeMany`=캐시 1회 일괄조회+미스만 병렬(단건 순차조회 금지).
