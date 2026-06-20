@@ -193,7 +193,7 @@ export default function KakaoMap() {
         // 지도 이동이 멈추면 중심 좌표의 시군구를 인식해 그 지역으로 전환.
         kakao.maps.event.addListener(map, "idle", () => {
           const c = map.getCenter();
-          geocoderRef.current.coord2regioncode(c.getLng(), c.getLat(), (res, st) => {
+          geocoderRef.current.coord2RegionCode(c.getLng(), c.getLat(), (res, st) => {
             if (st !== kakao.maps.services.Status.OK) return;
             const r = res.find((x) => x.region_type === "B") || res[0];
             const code = r.code.slice(0, 5);
