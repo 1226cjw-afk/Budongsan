@@ -6,10 +6,22 @@
 //   - XML 전용 (_type=json → Unauthorized)
 // 실거래 응답엔 좌표가 없으므로 단지명+법정동을 카카오 로컬 API로 지오코딩한다.
 
+import { supabaseAdmin } from "../../lib/supabaseServer";
+
 const RTMS_ENDPOINT =
   "http://apis.data.go.kr/1613000/RTMSDataSvcAptTrade/getRTMSDataSvcAptTrade";
 const KAKAO_KEYWORD = "https://dapi.kakao.com/v2/local/search/keyword.json";
 const KAKAO_ADDRESS = "https://dapi.kakao.com/v2/local/search/address.json";
+
+// 캐시 신선도: 지난 달까지의 실거래는 확정값이라 사실상 영구.
+// 이번 달 데이터는 거래가 계속 신고되므로 12시간만 캐시.
+const CURRENT_MONTH_TTL_MS = 12 * 60 * 60 * 1000;
+
+function isCurrentMonth(dealYmd) {
+  const now = new Date();
+  const cur = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}`;
+  return dealYmd === cur;
+}
 
 // <tag>value</tag> 한 개를 item 블록에서 뽑아낸다.
 function pick(block, tag) {
@@ -63,12 +75,30 @@ export async function GET(request) {
   const { searchParams } = new URL(request.url);
   const lawdCd = searchParams.get("lawdCd"); // 법정동 5자리
   const dealYmd = searchParams.get("dealYmd"); // YYYYMM
+  const refresh = searchParams.get("refresh") === "1"; // 캐시 무시 강제 갱신
 
   if (!lawdCd || !dealYmd) {
     return Response.json(
       { error: "lawdCd(법정동5자리)와 dealYmd(YYYYMM)가 필요합니다." },
       { status: 400 }
     );
+  }
+
+  // 0) 캐시 조회 — 히트하면 국토부/지오코딩(~9초) 건너뛰고 즉시 반환.
+  if (supabaseAdmin && !refresh) {
+    const { data: row } = await supabaseAdmin
+      .from("trade_cache")
+      .select("payload, fetched_at")
+      .eq("lawd_cd", lawdCd)
+      .eq("deal_ymd", dealYmd)
+      .maybeSingle();
+    if (row) {
+      const ageMs = Date.now() - new Date(row.fetched_at).getTime();
+      const stale = isCurrentMonth(dealYmd) && ageMs > CURRENT_MONTH_TTL_MS;
+      if (!stale) {
+        return Response.json({ ...row.payload, cached: true });
+      }
+    }
   }
 
   const dataKey = process.env.DATA_GO_KR_KEY;
@@ -129,12 +159,23 @@ export async function GET(request) {
     });
   }
 
-  return Response.json({
+  const payload = {
     lawdCd,
     dealYmd,
     total: trades.length,
     complexCount: complexes.length,
     geocoded: complexes.filter((c) => c.lat != null).length,
     complexes,
-  });
+  };
+
+  // 4) 캐시에 저장(upsert) — 다음 호출부터 지오코딩 생략. 실패해도 응답엔 영향 없음.
+  if (supabaseAdmin) {
+    const { error } = await supabaseAdmin.from("trade_cache").upsert(
+      { lawd_cd: lawdCd, deal_ymd: dealYmd, payload, fetched_at: new Date().toISOString() },
+      { onConflict: "lawd_cd,deal_ymd" }
+    );
+    if (error) console.error("[trade_cache] upsert 실패:", error.message);
+  }
+
+  return Response.json({ ...payload, cached: false });
 }

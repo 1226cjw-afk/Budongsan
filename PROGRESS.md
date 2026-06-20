@@ -3,11 +3,19 @@
 ## 상태: 개발 착수 (2026-06-17 시작)
 
 ## ▶ 다음 세션 시작점 (여기서 이어서)
-**B(지도+실거래가 마커) + git init + UX(지역/연월 선택) 완료.** 다음 후보:
-- **A = Supabase 캐싱** (다음 권장): 단지 170곳 순차 지오코딩에 ~9초 걸림 → 실거래+좌표를 캐시.
-  **선결 = 사용자 작업**: Supabase 프로젝트 생성 → `.env.local`에 `NEXT_PUBLIC_SUPABASE_URL`,
-  `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY` 추가. 키 들어오면 코드 작업 착수.
-- **UX 추가**: 면적별(평형) 가격 필터 (지역/연월 선택은 완료)
+**B(마커) + git init + UX(지역/연월) + Supabase 캐싱 완료.** 다음 후보:
+- **MCP**: `.mcp.json` 틀 완성, Personal Access Token(`sbp_...`)만 넣으면 됨 → 입력 후 Claude 재시작
+- **UX 추가**: 면적별(평형) 가격 필터
+- **2단계**: LTV/DSR 대출 계산 화면
+
+## ✅ Supabase 캐싱 완료 (2026-06-20)
+- 테이블 `public.trade_cache` (PK `lawd_cd`+`deal_ymd`, `payload jsonb`, `fetched_at`),
+  RLS 켜고 정책 없음 → secret 키(서버)만 접근. 스키마: `supabase/migrations/0001_trade_cache.sql`
+- `app/lib/supabaseServer.js`: secret 키 서버 클라이언트 (키 없으면 null → 캐시 없이 graceful degrade)
+- `app/api/trades/route.js`: 캐시 히트 시 즉시 반환 / 미스 시 국토부+지오코딩 후 upsert.
+  이번 달은 12h TTL, 지난 달은 영구. `?refresh=1`로 강제 갱신.
+- **검증**: 강남구 202605 미스 10.8s → 히트 0.66s (cached:true), DB 행 저장 확인.
+- 새 Supabase 키 형식 사용: publishable(클라)/secret(서버). `.env.local`에 URL/두 키 저장.
 
 ## ✅ git init + UX 완료 (2026-06-20)
 - `git init` + 첫 커밋. `.gitignore`가 `.env.local`/`.mcp.json`/node_modules/.next 제외 확인
