@@ -35,6 +35,10 @@
 - 실행: `npm run dev` → http://localhost:3000 (카카오 디벨로퍼스에 이 도메인 등록돼 있어야 지도 뜸)
 - 구조: App Router. 지도는 `app/components/KakaoMap.js`(클라이언트, SDK `autoload=false`로 동적 로드). 실거래가 마커는 여기에 추가
 - 스택 버전: Next.js 16 + React 19 (수동 스캐폴딩, `create-next-app` 미사용 — 기존 .md 파일 충돌 회피)
+- 변경 검증: `npx next build` (컴파일/타입). `next lint --file` 옵션은 없음.
+- API 동작 확인: `npm run dev`(백그라운드) → 로그 "Ready" 대기 → `curl "http://localhost:3000/api/trades?lawdCd=11680&dealYmd=202605"`
+- ⚠️ Git Bash에서 `curl -o /tmp/x` 한 파일을 node가 못 읽음(win 경로 불일치) → 응답은 **stdin 파이프**나 cwd 상대경로로 받을 것
+- `/api/trades`는 단지별 `trades[]`(area 포함) 전체 반환 → 면적 등 추가 필터는 재요청 없이 클라(`KakaoMap.js`의 `renderMarkers`)에서 처리
 
 ## 작업 규칙
 - 비밀키(API 키, Supabase 키, `.mcp.json`)는 **절대 커밋 금지** → `.gitignore` 확인 필수.
@@ -42,3 +46,9 @@
 - 정책 규칙(LTV/DSR)은 하드코딩하되 **출처·시행일 주석**을 반드시 달 것 (나중에 갱신 추적).
 - 한글 든 파일은 Read 도구로 볼 것 (PowerShell Get-Content 인코딩 깨짐).
 - 진척은 이 폴더의 `PROGRESS.md`에 기록.
+
+## Supabase
+- 키 **새 형식**: `sb_publishable_`(클라, `NEXT_PUBLIC_`) / `sb_secret_`(서버, RLS 우회). 둘 다 `.env.local`.
+- MCP는 secret 키 아님 → **Personal Access Token(`sbp_`)** 필요. `.mcp.json`(gitignore)에 저장, 적용엔 Claude 재시작.
+- 테이블 생성(DDL)은 secret 키로 HTTP 불가 → 대시보드 **SQL Editor**에서 실행, `supabase/migrations/`에 보관.
+- 실거래 캐시: `trade_cache`(PK `lawd_cd`+`deal_ymd`, `payload` jsonb). 이번달 12h TTL/지난달 영구, `?refresh=1` 강제 갱신.
