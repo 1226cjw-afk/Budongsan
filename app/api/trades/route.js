@@ -1,7 +1,7 @@
 // 국토부 실거래가 → 카카오 지오코딩 → JSON. 여러 달(기본 3개월) 병합해 단지별로 반환.
 // 수집/지오코딩/캐시 로직은 ../../lib/trades 에 공용화.
 
-import { fetchRawMonth, geocodeCached, monthsBack } from "../../lib/trades";
+import { fetchRawMonth, geocodeMany, monthsBack } from "../../lib/trades";
 
 export async function GET(request) {
   const { searchParams } = new URL(request.url);
@@ -38,11 +38,18 @@ export async function GET(request) {
     byApt.get(key).push(t);
   }
 
-  // 3) 단지별 지오코딩(좌표 캐시) — 순차로 카카오 rate limit 보호.
+  // 3) 단지 좌표 일괄 조회/지오코딩 (캐시 1회 + 미스만 병렬).
+  const items = [...byApt.values()].map((g) => ({
+    umdNm: g[0].umdNm,
+    aptNm: g[0].aptNm,
+    jibun: g[0].jibun,
+  }));
+  const coordMap = await geocodeMany(lawdCd, items);
+
   const complexes = [];
   for (const [, group] of byApt) {
-    const { aptNm, umdNm, jibun } = group[0];
-    const coord = await geocodeCached(lawdCd, umdNm, aptNm, jibun);
+    const { aptNm, umdNm } = group[0];
+    const coord = coordMap.get(`${umdNm}|${aptNm}`) || null;
     const amounts = group.map((g) => g.dealAmount);
     complexes.push({
       aptNm,

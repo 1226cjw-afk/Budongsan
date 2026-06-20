@@ -122,40 +122,68 @@ export async function fetchRawMonth(lawdCd, ymd, { refresh = false } = {}) {
   return trades;
 }
 
-// 단지 좌표 (geocode_cache 사용). {lat,lng}|null.
-export async function geocodeCached(lawdCd, umdNm, aptNm, jibun) {
+const GEOCODE_CONCURRENCY = 8; // 미캐시 단지 동시 지오코딩 수
+
+// 여러 단지 좌표를 한 번에 구한다 → 캐시는 1회 일괄 조회, 미스만 병렬 지오코딩 후 일괄 저장.
+// items: [{umdNm, aptNm, jibun}]. 반환: Map(`umd|apt` → {lat,lng}|null).
+export async function geocodeMany(lawdCd, items) {
+  const result = new Map();
+
+  // 1) 이 시군구의 캐시 좌표를 한 번에 읽는다 (순차 N회 조회 → 1회).
+  const cached = new Map();
   if (supabaseAdmin) {
-    const { data: row } = await supabaseAdmin
+    const { data } = await supabaseAdmin
       .from("geocode_cache")
-      .select("lat, lng")
-      .eq("lawd_cd", lawdCd)
-      .eq("umd_nm", umdNm)
-      .eq("apt_nm", aptNm)
-      .maybeSingle();
-    if (row) return row.lat != null ? { lat: row.lat, lng: row.lng } : null;
+      .select("umd_nm, apt_nm, lat, lng")
+      .eq("lawd_cd", lawdCd);
+    for (const r of data || []) {
+      cached.set(`${r.umd_nm}|${r.apt_nm}`, r.lat != null ? { lat: r.lat, lng: r.lng } : null);
+    }
   }
+
+  const misses = [];
+  for (const it of items) {
+    const key = `${it.umdNm}|${it.aptNm}`;
+    if (cached.has(key)) result.set(key, cached.get(key));
+    else misses.push(it);
+  }
+  if (!misses.length) return result;
+
+  // 2) 미캐시 단지만 병렬(동시 GEOCODE_CONCURRENCY개) 지오코딩.
   const kakaoKey = process.env.KAKAO_REST_API_KEY;
   if (!kakaoKey) throw new Error("KAKAO_REST_API_KEY 환경변수가 필요합니다.");
-  const coord = await geocode(
-    regionPrefix(lawdCd),
-    regionToken(lawdCd),
-    umdNm,
-    aptNm,
-    jibun,
-    kakaoKey
-  );
-  if (supabaseAdmin && coord) {
-    await supabaseAdmin.from("geocode_cache").upsert(
-      {
-        lawd_cd: lawdCd,
-        umd_nm: umdNm,
-        apt_nm: aptNm,
-        lat: coord.lat,
-        lng: coord.lng,
-        fetched_at: new Date().toISOString(),
-      },
-      { onConflict: "lawd_cd,umd_nm,apt_nm" }
+  const prefix = regionPrefix(lawdCd);
+  const token = regionToken(lawdCd);
+  const toUpsert = [];
+  for (let i = 0; i < misses.length; i += GEOCODE_CONCURRENCY) {
+    const batch = misses.slice(i, i + GEOCODE_CONCURRENCY);
+    const coords = await Promise.all(
+      batch.map((it) =>
+        geocode(prefix, token, it.umdNm, it.aptNm, it.jibun, kakaoKey).catch(() => null)
+      )
     );
+    batch.forEach((it, j) => {
+      const key = `${it.umdNm}|${it.aptNm}`;
+      result.set(key, coords[j]);
+      if (coords[j]) {
+        toUpsert.push({
+          lawd_cd: lawdCd,
+          umd_nm: it.umdNm,
+          apt_nm: it.aptNm,
+          lat: coords[j].lat,
+          lng: coords[j].lng,
+          fetched_at: new Date().toISOString(),
+        });
+      }
+    });
   }
-  return coord;
+
+  // 3) 새로 구한 좌표는 한 번에 저장.
+  if (supabaseAdmin && toUpsert.length) {
+    const { error } = await supabaseAdmin
+      .from("geocode_cache")
+      .upsert(toUpsert, { onConflict: "lawd_cd,umd_nm,apt_nm" });
+    if (error) console.error("[geocode_cache] batch upsert:", error.message);
+  }
+  return result;
 }
