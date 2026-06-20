@@ -36,6 +36,16 @@ const SEOUL_GU = [
   { code: "11740", name: "강동구" },
 ];
 
+// 전용면적(㎡) 구간 필터. 거래의 excluUseAr 기준 [min, max) 으로 거른다.
+// 평 환산값(㎡÷3.3)을 라벨에 함께 표기.
+const AREA_FILTERS = [
+  { value: "all", label: "전체 면적", min: 0, max: Infinity },
+  { value: "s", label: "~60㎡ (~18평)", min: 0, max: 60 },
+  { value: "m", label: "60~85㎡ (18~26평)", min: 60, max: 85 },
+  { value: "l", label: "85~135㎡ (26~41평)", min: 85, max: 135 },
+  { value: "xl", label: "135㎡~ (41평~)", min: 135, max: Infinity },
+];
+
 // 만원 단위 → "12억 3,400" 형태 한글 금액.
 function formatManwon(manwon) {
   const eok = Math.floor(manwon / 10000);
@@ -63,10 +73,12 @@ export default function KakaoMap() {
   const containerRef = useRef(null);
   const mapRef = useRef(null);
   const overlaysRef = useRef([]);
+  const dataRef = useRef(null); // 마지막으로 불러온 /api/trades 응답 (면적 필터 시 재요청 없이 재렌더)
   const [ready, setReady] = useState(false); // 지도 SDK 준비됨
   const [status, setStatus] = useState("지도 로딩 중…");
   const [lawdCd, setLawdCd] = useState("11680"); // 기본: 강남구
   const [dealYmd, setDealYmd] = useState(() => recentMonths(1)[0].value); // 기본: 이번 달
+  const [area, setArea] = useState("all"); // 면적 구간 필터
   const [loading, setLoading] = useState(false);
 
   const months = useMemo(() => recentMonths(13), []);
@@ -112,14 +124,21 @@ export default function KakaoMap() {
   // 지도 준비 완료 또는 지역/연월 변경 시 실거래가 다시 로드.
   useEffect(() => {
     if (!ready) return;
-    loadTrades(lawdCd, dealYmd, guName);
+    loadTrades(lawdCd, dealYmd);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, lawdCd, dealYmd]);
 
-  // 실거래가 단지를 받아 마커(커스텀 오버레이)로 표시.
-  async function loadTrades(code, ymd, name) {
+  // 면적 필터만 바뀌면 재요청 없이 마커만 다시 그린다.
+  useEffect(() => {
+    if (!ready || !dataRef.current) return;
+    renderMarkers();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [area]);
+
+  // 실거래가를 받아 dataRef에 저장하고 마커를 그린다.
+  async function loadTrades(code, ymd) {
     setLoading(true);
-    setStatus(`${name} ${ymd.slice(0, 4)}.${ymd.slice(4)} 실거래가 불러오는 중…`);
+    setStatus(`${guName} ${ymd.slice(0, 4)}.${ymd.slice(4)} 실거래가 불러오는 중…`);
     try {
       const res = await fetch(`/api/trades?lawdCd=${code}&dealYmd=${ymd}`);
       const data = await res.json();
@@ -127,25 +146,53 @@ export default function KakaoMap() {
         setStatus(`오류: ${data.error}`);
         return;
       }
+      dataRef.current = data;
+      renderMarkers();
+    } catch (e) {
+      setStatus(`불러오기 실패: ${e.message}`);
+    } finally {
+      setLoading(false);
+    }
+  }
 
-      const kakao = window.kakao;
-      const map = mapRef.current;
+  // dataRef + 선택된 면적 구간으로 마커(커스텀 오버레이)를 다시 그린다.
+  function renderMarkers() {
+    const data = dataRef.current;
+    if (!data) return;
+    const kakao = window.kakao;
+    const map = mapRef.current;
+    const bucket = AREA_FILTERS.find((a) => a.value === area) ?? AREA_FILTERS[0];
 
-      // 기존 오버레이 제거
-      overlaysRef.current.forEach((o) => o.setMap(null));
-      overlaysRef.current = [];
+    // 기존 오버레이 제거
+    overlaysRef.current.forEach((o) => o.setMap(null));
+    overlaysRef.current = [];
 
-      const geocoded = data.complexes.filter((c) => c.lat != null);
-      const bounds = new kakao.maps.LatLngBounds();
+    const bounds = new kakao.maps.LatLngBounds();
+    let shownComplexes = 0;
+    let shownTrades = 0;
 
-      geocoded.forEach((c) => {
+    data.complexes
+      .filter((c) => c.lat != null)
+      .forEach((c) => {
+        // 선택 면적 구간에 드는 거래만 추림 → 가격 요약 재계산
+        const hits = (c.trades || []).filter(
+          (t) => t.area >= bucket.min && t.area < bucket.max
+        );
+        if (!hits.length) return; // 이 구간에 거래 없는 단지는 표시 안 함
+
+        const amounts = hits.map((t) => t.dealAmount);
+        const maxAmount = Math.max(...amounts);
+        const minAmount = Math.min(...amounts);
+
         const pos = new kakao.maps.LatLng(c.lat, c.lng);
         bounds.extend(pos);
+        shownComplexes += 1;
+        shownTrades += hits.length;
 
         // 가격표 형태 커스텀 오버레이 (최고가 기준)
         const el = document.createElement("div");
         el.className = "trade-pin";
-        el.innerHTML = `<b>${formatManwon(c.maxAmount)}</b><span>${c.aptNm}</span>`;
+        el.innerHTML = `<b>${formatManwon(maxAmount)}</b><span>${c.aptNm}</span>`;
 
         const overlay = new kakao.maps.CustomOverlay({
           position: pos,
@@ -159,8 +206,8 @@ export default function KakaoMap() {
         const iw = new kakao.maps.InfoWindow({
           content: `<div style="padding:8px 10px;font-size:12px;line-height:1.6;min-width:160px">
             <b>${c.aptNm}</b> (${c.umdNm})<br/>
-            거래 ${c.count}건<br/>
-            최고 ${formatManwon(c.maxAmount)} · 최저 ${formatManwon(c.minAmount)}
+            거래 ${hits.length}건${area === "all" ? "" : ` · ${bucket.label}`}<br/>
+            최고 ${formatManwon(maxAmount)} · 최저 ${formatManwon(minAmount)}
           </div>`,
         });
         el.addEventListener("click", () => {
@@ -168,24 +215,23 @@ export default function KakaoMap() {
         });
       });
 
-      // 로드된 단지들에 맞춰 지도 영역 자동 이동
-      if (geocoded.length) map.setBounds(bounds);
+    // 표시된 단지들에 맞춰 지도 영역 자동 이동
+    if (shownComplexes) map.setBounds(bounds);
 
-      setStatus(
-        `${name} ${ymd.slice(0, 4)}.${ymd.slice(4)} · 거래 ${data.total}건 / 단지 ${data.geocoded}곳`
-      );
-    } catch (e) {
-      setStatus(`불러오기 실패: ${e.message}`);
-    } finally {
-      setLoading(false);
-    }
+    const ymd = data.dealYmd;
+    const areaTxt = area === "all" ? "" : ` · ${bucket.label}`;
+    setStatus(
+      shownComplexes
+        ? `${guName} ${ymd.slice(0, 4)}.${ymd.slice(4)}${areaTxt} · 거래 ${shownTrades}건 / 단지 ${shownComplexes}곳`
+        : `${guName} ${ymd.slice(0, 4)}.${ymd.slice(4)}${areaTxt} · 해당 면적 거래 없음`
+    );
   }
 
   return (
     <div style={{ position: "relative", width: "100%", height: "100vh" }}>
       <div ref={containerRef} style={{ width: "100%", height: "100%" }} />
 
-      {/* 좌측 상단 컨트롤 패널: 지역 + 거래연월 선택 */}
+      {/* 좌측 상단 컨트롤 패널: 지역 + 거래연월 + 면적 선택 */}
       <div
         style={{
           position: "absolute",
@@ -200,7 +246,7 @@ export default function KakaoMap() {
           display: "flex",
           flexDirection: "column",
           gap: 8,
-          minWidth: 240,
+          minWidth: 260,
         }}
       >
         <div style={{ display: "flex", gap: 8 }}>
@@ -229,6 +275,18 @@ export default function KakaoMap() {
             ))}
           </select>
         </div>
+        <select
+          value={area}
+          onChange={(e) => setArea(e.target.value)}
+          disabled={loading}
+          style={selectStyle}
+        >
+          {AREA_FILTERS.map((a) => (
+            <option key={a.value} value={a.value}>
+              {a.label}
+            </option>
+          ))}
+        </select>
         <div style={{ fontWeight: 600, color: loading ? "#6b7280" : "#111827" }}>
           {status}
         </div>
