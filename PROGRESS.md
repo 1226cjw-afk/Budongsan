@@ -3,11 +3,18 @@
 ## 상태: 개발 착수 (2026-06-17 시작)
 
 ## ▶ 다음 세션 시작점 (여기서 이어서)
-**B(지도+실거래가 마커) 완료.** 다음 후보:
-- **A = Supabase 캐싱**: 단지 170곳 순차 지오코딩에 ~9초 걸림 → 실거래+좌표를 캐시.
-  (Supabase 프로젝트 생성 → `.env.local`에 URL/anon/service 키 추가가 선결)
-- **UX**: 지역/거래연월 선택 UI (현재 강남구 202605 하드코딩), 면적별 가격 필터
-- **git init**: 아직 저장소 아님 → init 시 `.gitignore`가 `.env.local` 제외하는지 확인
+**B(지도+실거래가 마커) + git init + UX(지역/연월 선택) 완료.** 다음 후보:
+- **A = Supabase 캐싱** (다음 권장): 단지 170곳 순차 지오코딩에 ~9초 걸림 → 실거래+좌표를 캐시.
+  **선결 = 사용자 작업**: Supabase 프로젝트 생성 → `.env.local`에 `NEXT_PUBLIC_SUPABASE_URL`,
+  `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY` 추가. 키 들어오면 코드 작업 착수.
+- **UX 추가**: 면적별(평형) 가격 필터 (지역/연월 선택은 완료)
+
+## ✅ git init + UX 완료 (2026-06-20)
+- `git init` + 첫 커밋. `.gitignore`가 `.env.local`/`.mcp.json`/node_modules/.next 제외 확인
+  (`.env.local`은 `!!` ignored 상태로 검증). 아직 원격 저장소 없음.
+- `KakaoMap.js`: 서울 25개 구 + 최근 13개월 거래연월 **선택 드롭다운** 추가
+  (기존 강남구/202605 하드코딩 제거). 로드 후 마커에 맞춰 `map.setBounds()` 자동 이동.
+- `npx next build` 통과 확인.
 
 ## ✅ B단계 완료 (2026-06-17) — 지도에 실거래가 마커
 - `app/api/trades/route.js`: 국토부 실거래가 호출(http/UA/XML quirk 준수) → `<item>` 정규식 파싱
