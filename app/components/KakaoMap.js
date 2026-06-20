@@ -1,13 +1,16 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { REGIONS, regionName } from "../lib/regions";
+import { REGIONS, ALL_REGIONS, regionName } from "../lib/regions";
 
-// 카카오맵 JS SDK를 동적으로 로드해 지도를 렌더링하고,
-// /api/trades 에서 받은 실거래가 단지를 마커로 표시하는 클라이언트 컴포넌트.
-// SDK는 카카오 디벨로퍼스에 등록한 사이트 도메인(http://localhost:3000)에서만 동작.
+// 카카오맵 + 국토부 실거래가. 지도 이동 시 중심 지역을 자동 인식해 그 시군구 데이터를 로드하고,
+// 단지 클릭 시 우측 패널에 평형별 가격 + 월별 시세 추세 그래프 + 즐겨찾기를 보여준다.
 
-// 전용면적(㎡) 구간 필터. 거래 excluUseAr 기준 [min, max).
+const VALID_CODES = new Set(ALL_REGIONS.map((r) => r.code));
+const DEFAULT_CODE = "41173"; // 안양시 동안구
+const DEFAULT_CENTER = { lat: 37.3897, lng: 126.9536 }; // 안양 평촌 일대
+const MONTHS = 3; // 지도 마커: 최근 3개월 병합
+
 const AREA_FILTERS = [
   { value: "all", label: "전체 면적", min: 0, max: Infinity },
   { value: "s", label: "~60㎡ (~18평)", min: 0, max: 60 },
@@ -16,7 +19,6 @@ const AREA_FILTERS = [
   { value: "xl", label: "135㎡~ (41평~)", min: 135, max: Infinity },
 ];
 
-// 거래가(만원) 구간. 12억 이상은 수집 단계에서 제외되므로 ~12억까지.
 const PRICE_FILTERS = [
   { value: "all", label: "전체 가격", min: 0, max: Infinity },
   { value: "p1", label: "~3억", min: 0, max: 30000 },
@@ -25,9 +27,8 @@ const PRICE_FILTERS = [
   { value: "p4", label: "9~12억", min: 90000, max: 120000 },
 ];
 
-const PYEONG = 3.3058; // 1평 = 3.3058㎡
+const PYEONG = 3.3058;
 
-// 만원 단위 → "12억 3,400" 형태 한글 금액.
 function formatManwon(manwon) {
   const v = Math.round(manwon);
   const eok = Math.floor(v / 10000);
@@ -37,12 +38,10 @@ function formatManwon(manwon) {
   return rest.toLocaleString();
 }
 
-// "2026-05-12" → "26.05.12"
 function shortDate(ymd) {
   return ymd ? ymd.slice(2).replace(/-/g, ".") : "";
 }
 
-// 거래 배열 통계: 건수/평균/최근(날짜 최댓값).
 function summarize(trades) {
   if (!trades.length) return null;
   const sum = trades.reduce((s, t) => s + t.dealAmount, 0);
@@ -55,7 +54,6 @@ function summarize(trades) {
   };
 }
 
-// 단지 거래를 전용면적(정수 ㎡)별로 묶어 평형별 가격 통계 반환.
 function groupByPyeong(trades) {
   const m = new Map();
   for (const t of trades) {
@@ -72,69 +70,138 @@ function groupByPyeong(trades) {
         pyeong: Math.round(m2 / PYEONG),
         count: s.count,
         avg: s.avg,
-        min: Math.min(...arr.map((t) => t.dealAmount)),
-        max: Math.max(...arr.map((t) => t.dealAmount)),
         recentAmount: s.recentAmount,
         recentDate: s.recentDate,
       };
     });
 }
 
-// 기준일(오늘)부터 과거로 N개월치 거래연월 옵션. value=YYYYMM, label="YYYY.MM".
-function recentMonths(n) {
-  const out = [];
-  const d = new Date();
-  for (let i = 0; i < n; i++) {
-    const y = d.getFullYear();
-    const m = d.getMonth() + 1;
-    out.push({
-      value: `${y}${String(m).padStart(2, "0")}`,
-      label: `${y}.${String(m).padStart(2, "0")}`,
-    });
-    d.setMonth(d.getMonth() - 1);
+const favKey = (lawdCd, umdNm, aptNm) => `${lawdCd}|${umdNm}|${aptNm}`;
+
+// 월별 시세 추세 라인차트(SVG). series: [{ymd, avg, count}] 과거→현재.
+function TrendChart({ series }) {
+  const pts = series.filter((s) => s.avg != null);
+  if (pts.length < 2) {
+    return (
+      <div style={{ fontSize: 12, color: "#9ca3af", padding: "8px 0" }}>
+        추세를 그릴 거래가 부족합니다.
+      </div>
+    );
   }
-  return out;
+  const W = 264;
+  const H = 96;
+  const PAD = 6;
+  const vals = pts.map((p) => p.avg);
+  const min = Math.min(...vals);
+  const max = Math.max(...vals);
+  const span = max - min || 1;
+  const n = series.length;
+  const x = (i) => PAD + (i * (W - 2 * PAD)) / (n - 1);
+  const y = (v) => H - PAD - ((v - min) / span) * (H - 2 * PAD);
+  const line = pts
+    .map((p) => `${x(series.indexOf(p))},${y(p.avg)}`)
+    .join(" ");
+  const first = pts[0];
+  const last = pts[pts.length - 1];
+  const up = last.avg >= first.avg;
+  return (
+    <div>
+      <svg width={W} height={H} style={{ display: "block" }}>
+        <polyline
+          points={line}
+          fill="none"
+          stroke={up ? "#dc2626" : "#2563eb"}
+          strokeWidth="2"
+        />
+        {pts.map((p) => (
+          <circle
+            key={p.ymd}
+            cx={x(series.indexOf(p))}
+            cy={y(p.avg)}
+            r="2.5"
+            fill={up ? "#dc2626" : "#2563eb"}
+          />
+        ))}
+      </svg>
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "#9ca3af" }}>
+        <span>{first.ymd.slice(2, 4)}.{first.ymd.slice(4)}</span>
+        <span>최고 {formatManwon(max)} · 최저 {formatManwon(min)}</span>
+        <span>{last.ymd.slice(2, 4)}.{last.ymd.slice(4)}</span>
+      </div>
+    </div>
+  );
 }
 
 export default function KakaoMap() {
   const containerRef = useRef(null);
   const mapRef = useRef(null);
+  const geocoderRef = useRef(null);
   const overlaysRef = useRef([]);
   const dataRef = useRef(null);
+  const lawdCdRef = useRef(DEFAULT_CODE); // idle 핸들러가 최신 지역 코드 참조
+  const fitRef = useRef(true); // 다음 렌더에서 지도 영역 자동 맞춤 여부
+  const favSetRef = useRef(new Set());
+
   const [ready, setReady] = useState(false);
   const [status, setStatus] = useState("지도 로딩 중…");
-  const [lawdCd, setLawdCd] = useState("11680");
-  const [dealYmd, setDealYmd] = useState(() => recentMonths(1)[0].value);
+  const [lawdCd, setLawdCd] = useState(DEFAULT_CODE);
   const [area, setArea] = useState("all");
   const [price, setPrice] = useState("all");
   const [loading, setLoading] = useState(false);
-  const [selected, setSelected] = useState(null); // 세부정보 패널 대상 단지
+  const [selected, setSelected] = useState(null);
+  const [trend, setTrend] = useState({ loading: false, series: null });
+  const [favorites, setFavorites] = useState([]);
+  const [showFavs, setShowFavs] = useState(false);
 
-  const months = useMemo(() => recentMonths(13), []);
   const regionLabel = useMemo(() => regionName(lawdCd), [lawdCd]);
+  const favSet = useMemo(
+    () => new Set(favorites.map((f) => favKey(f.lawd_cd, f.umd_nm, f.apt_nm))),
+    [favorites]
+  );
+  useEffect(() => {
+    favSetRef.current = favSet;
+  }, [favSet]);
+  useEffect(() => {
+    lawdCdRef.current = lawdCd;
+  }, [lawdCd]);
 
-  // 세부정보 패널용 평형별 통계 (선택 단지의 전체 거래 기준).
   const detail = useMemo(() => {
     if (!selected) return null;
     const ts = selected.trades || [];
-    return {
-      overall: summarize(ts),
-      buildYear: ts[0]?.buildYear,
-      groups: groupByPyeong(ts),
-    };
+    return { overall: summarize(ts), buildYear: ts[0]?.buildYear, groups: groupByPyeong(ts) };
   }, [selected]);
 
-  // 지도 초기화 (1회)
+  const isSelectedFav = selected
+    ? favSet.has(favKey(lawdCd, selected.umdNm, selected.aptNm))
+    : false;
+
+  // 지도 초기화 (1회) — services 라이브러리로 좌표→지역 변환.
   useEffect(() => {
     const KEY = process.env.NEXT_PUBLIC_KAKAO_MAP_KEY;
     const SCRIPT_ID = "kakao-map-sdk";
 
     function initMap() {
       window.kakao.maps.load(() => {
-        const center = new window.kakao.maps.LatLng(37.5172, 127.0473);
-        mapRef.current = new window.kakao.maps.Map(containerRef.current, {
-          center,
-          level: 6,
+        const kakao = window.kakao;
+        const map = new kakao.maps.Map(containerRef.current, {
+          center: new kakao.maps.LatLng(DEFAULT_CENTER.lat, DEFAULT_CENTER.lng),
+          level: 5,
+        });
+        mapRef.current = map;
+        geocoderRef.current = new kakao.maps.services.Geocoder();
+
+        // 지도 이동이 멈추면 중심 좌표의 시군구를 인식해 그 지역으로 전환.
+        kakao.maps.event.addListener(map, "idle", () => {
+          const c = map.getCenter();
+          geocoderRef.current.coord2regioncode(c.getLng(), c.getLat(), (res, st) => {
+            if (st !== kakao.maps.services.Status.OK) return;
+            const r = res.find((x) => x.region_type === "B") || res[0];
+            const code = r.code.slice(0, 5);
+            if (VALID_CODES.has(code) && code !== lawdCdRef.current) {
+              fitRef.current = false; // 팬으로 인한 전환 → 자동 맞춤 안 함
+              setLawdCd(code);
+            }
+          });
         });
         setReady(true);
       });
@@ -152,30 +219,91 @@ export default function KakaoMap() {
     const script = document.createElement("script");
     script.id = SCRIPT_ID;
     script.async = true;
-    script.src = `//dapi.kakao.com/v2/maps/sdk.js?appkey=${KEY}&autoload=false`;
+    script.src = `//dapi.kakao.com/v2/maps/sdk.js?appkey=${KEY}&autoload=false&libraries=services`;
     script.addEventListener("load", initMap);
     document.head.appendChild(script);
     return () => script.removeEventListener("load", initMap);
   }, []);
 
   useEffect(() => {
+    loadFavorites();
+  }, []);
+
+  useEffect(() => {
     if (!ready) return;
-    loadTrades(lawdCd, dealYmd);
+    loadTrades(lawdCd);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready, lawdCd, dealYmd]);
+  }, [ready, lawdCd]);
 
   useEffect(() => {
     if (!ready || !dataRef.current) return;
     renderMarkers();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [area, price]);
+  }, [area, price, favorites]);
 
-  async function loadTrades(code, ymd) {
+  // 단지 선택 시 월별 추세 로드.
+  useEffect(() => {
+    if (!selected) {
+      setTrend({ loading: false, series: null });
+      return;
+    }
+    let alive = true;
+    setTrend({ loading: true, series: null });
+    fetch(
+      `/api/trend?lawdCd=${lawdCd}&umdNm=${encodeURIComponent(selected.umdNm)}&aptNm=${encodeURIComponent(selected.aptNm)}&months=12`
+    )
+      .then((r) => r.json())
+      .then((d) => {
+        if (alive) setTrend({ loading: false, series: d.series || [] });
+      })
+      .catch(() => alive && setTrend({ loading: false, series: [] }));
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected]);
+
+  async function loadFavorites() {
+    try {
+      const d = await fetch("/api/favorites").then((r) => r.json());
+      if (d.favorites) setFavorites(d.favorites);
+    } catch {
+      /* 무시 */
+    }
+  }
+
+  async function toggleFavorite() {
+    if (!selected) return;
+    const fav = isSelectedFav;
+    const body = {
+      lawdCd,
+      umdNm: selected.umdNm,
+      aptNm: selected.aptNm,
+      lat: selected.lat,
+      lng: selected.lng,
+    };
+    if (fav) {
+      await fetch(
+        `/api/favorites?lawdCd=${lawdCd}&umdNm=${encodeURIComponent(selected.umdNm)}&aptNm=${encodeURIComponent(selected.aptNm)}`,
+        { method: "DELETE" }
+      );
+    } else {
+      await fetch("/api/favorites", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    }
+    loadFavorites();
+  }
+
+  async function loadTrades(code) {
     setLoading(true);
     setSelected(null);
-    setStatus(`${regionLabel} ${ymd.slice(0, 4)}.${ymd.slice(4)} 실거래가 불러오는 중…`);
+    setStatus(`${regionName(code)} 최근 ${MONTHS}개월 불러오는 중…`);
     try {
-      const res = await fetch(`/api/trades?lawdCd=${code}&dealYmd=${ymd}`);
+      const ymd = `${new Date().getFullYear()}${String(new Date().getMonth() + 1).padStart(2, "0")}`;
+      const res = await fetch(`/api/trades?lawdCd=${code}&dealYmd=${ymd}&months=${MONTHS}`);
       const data = await res.json();
       if (data.error) {
         setStatus(`오류: ${data.error}`);
@@ -190,18 +318,17 @@ export default function KakaoMap() {
     }
   }
 
-  // dataRef + 면적/가격 필터로 마커를 다시 그린다. 마커 클릭 → 세부정보 패널.
   function renderMarkers() {
     const data = dataRef.current;
     if (!data) return;
     const kakao = window.kakao;
     const map = mapRef.current;
-    const aBucket = AREA_FILTERS.find((a) => a.value === area) ?? AREA_FILTERS[0];
-    const pBucket = PRICE_FILTERS.find((p) => p.value === price) ?? PRICE_FILTERS[0];
+    const aB = AREA_FILTERS.find((a) => a.value === area) ?? AREA_FILTERS[0];
+    const pB = PRICE_FILTERS.find((p) => p.value === price) ?? PRICE_FILTERS[0];
+    const favs = favSetRef.current;
 
     overlaysRef.current.forEach((o) => o.setMap(null));
     overlaysRef.current = [];
-
     const bounds = new kakao.maps.LatLngBounds();
     let shownComplexes = 0;
     let shownTrades = 0;
@@ -211,10 +338,10 @@ export default function KakaoMap() {
       .forEach((c) => {
         const hits = (c.trades || []).filter(
           (t) =>
-            t.dealAmount >= pBucket.min &&
-            t.dealAmount < pBucket.max &&
-            t.area >= aBucket.min &&
-            t.area < aBucket.max
+            t.dealAmount >= pB.min &&
+            t.dealAmount < pB.max &&
+            t.area >= aB.min &&
+            t.area < aB.max
         );
         const stat = summarize(hits);
         if (!stat) return;
@@ -224,48 +351,56 @@ export default function KakaoMap() {
         shownComplexes += 1;
         shownTrades += stat.count;
 
+        const isFav = favs.has(favKey(data.lawdCd, c.umdNm, c.aptNm));
         const el = document.createElement("div");
-        el.className = "trade-pin";
-        el.innerHTML = `<b>평균 ${formatManwon(stat.avg)}</b><span>${c.aptNm}</span>`;
+        el.className = "trade-pin" + (isFav ? " trade-pin--fav" : "");
+        el.innerHTML = `<b>${isFav ? "★ " : ""}평균 ${formatManwon(stat.avg)}</b><span>${c.aptNm}</span>`;
 
-        const overlay = new kakao.maps.CustomOverlay({
-          position: pos,
-          content: el,
-          yAnchor: 1.2,
-        });
+        const overlay = new kakao.maps.CustomOverlay({ position: pos, content: el, yAnchor: 1.2 });
         overlay.setMap(map);
         overlaysRef.current.push(overlay);
-
         el.addEventListener("click", () => setSelected(c));
       });
 
-    if (shownComplexes) map.setBounds(bounds);
+    if (fitRef.current && shownComplexes) {
+      map.setBounds(bounds);
+      fitRef.current = false;
+    }
 
-    const ymd = data.dealYmd;
-    const tags = [
-      area === "all" ? null : aBucket.label,
-      price === "all" ? null : pBucket.label,
-    ]
+    const tags = [area === "all" ? null : aB.label, price === "all" ? null : pB.label]
       .filter(Boolean)
       .join(" · ");
-    const tagTxt = tags ? ` · ${tags}` : "";
     setStatus(
       shownComplexes
-        ? `${regionLabel} ${ymd.slice(0, 4)}.${ymd.slice(4)}${tagTxt} · 거래 ${shownTrades}건 / 단지 ${shownComplexes}곳`
-        : `${regionLabel} ${ymd.slice(0, 4)}.${ymd.slice(4)}${tagTxt} · 조건에 맞는 거래 없음`
+        ? `${regionName(data.lawdCd)} · 최근 ${MONTHS}개월${tags ? " · " + tags : ""} · 거래 ${shownTrades}건 / 단지 ${shownComplexes}곳`
+        : `${regionName(data.lawdCd)} · 최근 ${MONTHS}개월${tags ? " · " + tags : ""} · 조건에 맞는 거래 없음`
     );
+  }
+
+  function selectRegion(code) {
+    fitRef.current = true;
+    setLawdCd(code);
+  }
+
+  function gotoFavorite(f) {
+    setShowFavs(false);
+    fitRef.current = true;
+    if (f.lat != null && mapRef.current) {
+      mapRef.current.panTo(new window.kakao.maps.LatLng(f.lat, f.lng));
+    }
+    setLawdCd(f.lawd_cd);
   }
 
   return (
     <div style={{ position: "relative", width: "100%", height: "100vh" }}>
       <div ref={containerRef} style={{ width: "100%", height: "100%" }} />
 
-      {/* 좌측 상단 컨트롤 패널 */}
+      {/* 좌측 상단 컨트롤 */}
       <div style={controlPanel}>
         <div style={{ display: "flex", gap: 8 }}>
           <select
             value={lawdCd}
-            onChange={(e) => setLawdCd(e.target.value)}
+            onChange={(e) => selectRegion(e.target.value)}
             disabled={loading}
             style={selectStyle}
           >
@@ -279,89 +414,79 @@ export default function KakaoMap() {
               </optgroup>
             ))}
           </select>
-          <select
-            value={dealYmd}
-            onChange={(e) => setDealYmd(e.target.value)}
-            disabled={loading}
-            style={selectStyle}
+          <button
+            onClick={() => setShowFavs((v) => !v)}
+            style={{ ...selectStyle, flex: "0 0 auto", fontWeight: 600 }}
           >
-            {months.map((m) => (
-              <option key={m.value} value={m.value}>
-                {m.label}
-              </option>
-            ))}
-          </select>
+            ★ {favorites.length}
+          </button>
         </div>
         <div style={{ display: "flex", gap: 8 }}>
-          <select
-            value={area}
-            onChange={(e) => setArea(e.target.value)}
-            disabled={loading}
-            style={selectStyle}
-          >
+          <select value={area} onChange={(e) => setArea(e.target.value)} disabled={loading} style={selectStyle}>
             {AREA_FILTERS.map((a) => (
-              <option key={a.value} value={a.value}>
-                {a.label}
-              </option>
+              <option key={a.value} value={a.value}>{a.label}</option>
             ))}
           </select>
-          <select
-            value={price}
-            onChange={(e) => setPrice(e.target.value)}
-            disabled={loading}
-            style={selectStyle}
-          >
+          <select value={price} onChange={(e) => setPrice(e.target.value)} disabled={loading} style={selectStyle}>
             {PRICE_FILTERS.map((p) => (
-              <option key={p.value} value={p.value}>
-                {p.label}
-              </option>
+              <option key={p.value} value={p.value}>{p.label}</option>
             ))}
           </select>
         </div>
-        <div style={{ fontWeight: 600, color: loading ? "#6b7280" : "#111827" }}>
-          {status}
-        </div>
+        <div style={{ fontWeight: 600, color: loading ? "#6b7280" : "#111827" }}>{status}</div>
+        <div style={{ fontSize: 11, color: "#9ca3af" }}>지도를 움직이면 해당 지역으로 전환됩니다</div>
+
+        {showFavs && (
+          <div style={{ marginTop: 4, borderTop: "1px solid #eee", paddingTop: 6, maxHeight: 200, overflowY: "auto" }}>
+            {favorites.length === 0 ? (
+              <div style={{ fontSize: 12, color: "#9ca3af" }}>즐겨찾기가 없습니다</div>
+            ) : (
+              favorites.map((f) => (
+                <div
+                  key={f.id}
+                  onClick={() => gotoFavorite(f)}
+                  style={{ fontSize: 12, padding: "4px 2px", cursor: "pointer", borderBottom: "1px solid #f3f4f6" }}
+                >
+                  ★ {f.apt_nm} <span style={{ color: "#9ca3af" }}>({regionName(f.lawd_cd)} {f.umd_nm})</span>
+                </div>
+              ))
+            )}
+          </div>
+        )}
       </div>
 
       {/* 우측 세부정보 패널 */}
       {selected && detail && (
         <div style={detailPanel}>
-          <button onClick={() => setSelected(null)} style={closeBtn} aria-label="닫기">
-            ×
-          </button>
-          <div style={{ fontSize: 16, fontWeight: 700 }}>{selected.aptNm}</div>
+          <button onClick={() => setSelected(null)} style={closeBtn} aria-label="닫기">×</button>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, paddingRight: 20 }}>
+            <div style={{ fontSize: 16, fontWeight: 700 }}>{selected.aptNm}</div>
+            <button onClick={toggleFavorite} style={starBtn} title="즐겨찾기">
+              {isSelectedFav ? "★" : "☆"}
+            </button>
+          </div>
           <div style={{ fontSize: 12, color: "#6b7280", marginTop: 2 }}>
             {regionLabel} {selected.umdNm}
             {detail.buildYear ? ` · ${detail.buildYear}년 준공` : ""}
           </div>
 
           {detail.overall && (
-            <div
-              style={{
-                marginTop: 10,
-                padding: "8px 10px",
-                background: "#f3f4f6",
-                borderRadius: 8,
-                fontSize: 13,
-              }}
-            >
-              이 달 거래 <b>{detail.overall.count}건</b>
-              <br />
-              평균 시세 <b>{formatManwon(detail.overall.avg)}</b>
-              <br />
-              최근 거래{" "}
-              <b style={{ color: "#2563eb" }}>
-                {formatManwon(detail.overall.recentAmount)}
-              </b>{" "}
-              <span style={{ color: "#9ca3af" }}>
-                ({shortDate(detail.overall.recentDate)})
-              </span>
+            <div style={summaryBox}>
+              최근 {MONTHS}개월 거래 <b>{detail.overall.count}건</b><br />
+              평균 시세 <b>{formatManwon(detail.overall.avg)}</b><br />
+              최근 거래 <b style={{ color: "#2563eb" }}>{formatManwon(detail.overall.recentAmount)}</b>{" "}
+              <span style={{ color: "#9ca3af" }}>({shortDate(detail.overall.recentDate)})</span>
             </div>
           )}
 
-          <div style={{ marginTop: 12, fontSize: 12, fontWeight: 600 }}>
-            평형별 가격
-          </div>
+          <div style={{ marginTop: 12, fontSize: 12, fontWeight: 600 }}>월별 시세 추세 (최근 12개월)</div>
+          {trend.loading ? (
+            <div style={{ fontSize: 12, color: "#9ca3af", padding: "8px 0" }}>불러오는 중…</div>
+          ) : trend.series ? (
+            <TrendChart series={trend.series} />
+          ) : null}
+
+          <div style={{ marginTop: 12, fontSize: 12, fontWeight: 600 }}>평형별 가격</div>
           <table style={{ width: "100%", fontSize: 12, borderCollapse: "collapse", marginTop: 4 }}>
             <thead>
               <tr style={{ color: "#6b7280", textAlign: "right" }}>
@@ -379,16 +504,11 @@ export default function KakaoMap() {
                   </td>
                   <td style={{ textAlign: "right" }}>{g.count}</td>
                   <td style={{ textAlign: "right" }}>{formatManwon(g.avg)}</td>
-                  <td style={{ textAlign: "right", color: "#2563eb" }}>
-                    {formatManwon(g.recentAmount)}
-                  </td>
+                  <td style={{ textAlign: "right", color: "#2563eb" }}>{formatManwon(g.recentAmount)}</td>
                 </tr>
               ))}
             </tbody>
           </table>
-          <div style={{ marginTop: 6, fontSize: 11, color: "#9ca3af" }}>
-            ㎡=전용면적 · 평형별 최저~최고는 향후 추가
-          </div>
         </div>
       )}
 
@@ -400,6 +520,8 @@ export default function KakaoMap() {
           box-shadow: 0 1px 4px rgba(0,0,0,0.3); cursor: pointer;
           transform: translateX(-50%);
         }
+        .trade-pin--fav { background: #f59e0b; }
+        .trade-pin--fav:hover { background: #d97706; }
         .trade-pin b { font-size: 12px; }
         .trade-pin span { font-size: 9px; opacity: 0.85; max-width: 90px;
           overflow: hidden; text-overflow: ellipsis; }
@@ -410,53 +532,29 @@ export default function KakaoMap() {
 }
 
 const controlPanel = {
-  position: "absolute",
-  top: 12,
-  left: 12,
-  zIndex: 10,
-  background: "rgba(255,255,255,0.96)",
-  padding: "10px 12px",
-  borderRadius: 10,
-  boxShadow: "0 1px 6px rgba(0,0,0,0.2)",
-  fontSize: 13,
-  display: "flex",
-  flexDirection: "column",
-  gap: 8,
-  minWidth: 270,
+  position: "absolute", top: 12, left: 12, zIndex: 10,
+  background: "rgba(255,255,255,0.96)", padding: "10px 12px",
+  borderRadius: 10, boxShadow: "0 1px 6px rgba(0,0,0,0.2)",
+  fontSize: 13, display: "flex", flexDirection: "column", gap: 8, width: 280,
 };
-
 const detailPanel = {
-  position: "absolute",
-  top: 12,
-  right: 12,
-  bottom: 12,
-  zIndex: 10,
-  width: 300,
-  overflowY: "auto",
-  background: "#fff",
-  padding: "16px 18px",
-  borderRadius: 12,
-  boxShadow: "0 2px 12px rgba(0,0,0,0.25)",
+  position: "absolute", top: 12, right: 12, bottom: 12, zIndex: 10, width: 300,
+  overflowY: "auto", background: "#fff", padding: "16px 18px",
+  borderRadius: 12, boxShadow: "0 2px 12px rgba(0,0,0,0.25)",
 };
-
+const summaryBox = {
+  marginTop: 10, padding: "8px 10px", background: "#f3f4f6",
+  borderRadius: 8, fontSize: 13,
+};
 const closeBtn = {
-  position: "absolute",
-  top: 10,
-  right: 12,
-  border: "none",
-  background: "none",
-  fontSize: 22,
-  lineHeight: 1,
-  cursor: "pointer",
-  color: "#9ca3af",
+  position: "absolute", top: 10, right: 12, border: "none", background: "none",
+  fontSize: 22, lineHeight: 1, cursor: "pointer", color: "#9ca3af",
 };
-
+const starBtn = {
+  border: "none", background: "none", fontSize: 20, lineHeight: 1,
+  cursor: "pointer", color: "#f59e0b", padding: 0,
+};
 const selectStyle = {
-  flex: 1,
-  padding: "6px 8px",
-  borderRadius: 6,
-  border: "1px solid #d1d5db",
-  fontSize: 13,
-  background: "#fff",
-  cursor: "pointer",
+  flex: 1, padding: "6px 8px", borderRadius: 6, border: "1px solid #d1d5db",
+  fontSize: 13, background: "#fff", cursor: "pointer",
 };
