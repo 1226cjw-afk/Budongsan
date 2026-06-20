@@ -131,7 +131,8 @@ export async function GET(request) {
     return Response.json({ error: `국토부 API 오류 ${resultCode}: ${msg}` }, { status: 502 });
   }
 
-  const trades = parseTrades(xml);
+  // 12억(120,000만원) 이상 거래는 대상 외 → 수집 단계에서 제외 (지오코딩·캐시 부담도 감소).
+  const trades = parseTrades(xml).filter((t) => t.dealAmount < 120000);
 
   // 2) 단지명 기준으로 묶어서 지오코딩 횟수를 줄인다.
   const byApt = new Map();

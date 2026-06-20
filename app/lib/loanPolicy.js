@@ -48,7 +48,7 @@ export function stressRate(regulated) {
 // householdType: "무주택" | "1주택" | "다주택"
 function ltvRate(regulated, householdType, isFirstTime) {
   if (regulated) {
-    if (isFirstTime) return 0.8; // 생애최초 (단 수도권 한도 6억 별도 적용)
+    if (isFirstTime) return 0.7; // 생애최초 수도권 LTV 70% (단 수도권 한도 6억 별도 적용)
     if (householdType === "다주택") return 0; // 규제지역 다주택 주담대 금지
     return 0.4; // 무주택 / 처분조건부 1주택
   }
