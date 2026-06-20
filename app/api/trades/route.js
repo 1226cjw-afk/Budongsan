@@ -7,6 +7,7 @@
 // 실거래 응답엔 좌표가 없으므로 단지명+법정동을 카카오 로컬 API로 지오코딩한다.
 
 import { supabaseAdmin } from "../../lib/supabaseServer";
+import { regionPrefix, regionToken } from "../../lib/regions";
 
 const RTMS_ENDPOINT =
   "http://apis.data.go.kr/1613000/RTMSDataSvcAptTrade/getRTMSDataSvcAptTrade";
@@ -45,29 +46,35 @@ function parseTrades(xml) {
 }
 
 // 단지 하나를 카카오 로컬 API로 지오코딩. 좌표 {lat,lng} 또는 null.
-async function geocode(umdNm, aptNm, jibun, kakaoKey) {
+// 쿼리에 지역 경로(시·도·시군구)를 붙여 정확도를 높이고, 결과 주소가 해당 지역인지
+// 토큰(예: "동안구")으로 검증한다 → 동명이단지가 타지역(부산 등)으로 찍히는 것 방지.
+async function geocode(prefix, token, umdNm, aptNm, jibun, kakaoKey) {
   const headers = { Authorization: `KakaoAK ${kakaoKey}` };
 
-  // 1순위: 키워드 검색 "법정동 단지명" (예: "역삼동 개나리아파트")
-  const kw = await fetch(
-    `${KAKAO_KEYWORD}?query=${encodeURIComponent(`${umdNm} ${aptNm}`)}`,
-    { headers }
-  ).then((r) => r.json());
-  if (kw.documents?.length) {
-    const d = kw.documents[0];
-    return { lat: Number(d.y), lng: Number(d.x) };
-  }
+  const search = async (base, query) => {
+    const res = await fetch(`${base}?query=${encodeURIComponent(query)}`, {
+      headers,
+    }).then((r) => r.json());
+    return res.documents || [];
+  };
+  // 결과 주소가 대상 지역 토큰을 포함하는 첫 문서.
+  const inRegion = (docs) =>
+    docs.find((d) =>
+      `${d.address_name || ""} ${d.road_address_name || ""}`.includes(token)
+    );
+  const toCoord = (d) => (d ? { lat: Number(d.y), lng: Number(d.x) } : null);
 
-  // 2순위: 지번 주소 검색 "법정동 지번"
-  const ad = await fetch(
-    `${KAKAO_ADDRESS}?query=${encodeURIComponent(`${umdNm} ${jibun}`)}`,
-    { headers }
-  ).then((r) => r.json());
-  if (ad.documents?.length) {
-    const d = ad.documents[0];
-    return { lat: Number(d.y), lng: Number(d.x) };
+  // 순차 시도: 지역+동+단지 → 지역+단지 → 지역+동+지번(주소) → 동+단지(폴백)
+  const attempts = [
+    [KAKAO_KEYWORD, `${prefix} ${umdNm} ${aptNm}`],
+    [KAKAO_KEYWORD, `${prefix} ${aptNm}`],
+    [KAKAO_ADDRESS, `${prefix} ${umdNm} ${jibun}`],
+    [KAKAO_KEYWORD, `${umdNm} ${aptNm}`],
+  ];
+  for (const [base, query] of attempts) {
+    const hit = inRegion(await search(base, query));
+    if (hit) return toCoord(hit);
   }
-
   return null;
 }
 
@@ -143,10 +150,12 @@ export async function GET(request) {
   }
 
   // 3) 단지별 지오코딩 (순차 — 카카오 rate limit 보호)
+  const prefix = regionPrefix(lawdCd);
+  const token = regionToken(lawdCd);
   const complexes = [];
   for (const [, group] of byApt) {
     const { aptNm, umdNm, jibun } = group[0];
-    const coord = await geocode(umdNm, aptNm, jibun, kakaoKey);
+    const coord = await geocode(prefix, token, umdNm, aptNm, jibun, kakaoKey);
     complexes.push({
       aptNm,
       umdNm,

@@ -1,96 +1,13 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { REGIONS, regionName } from "../lib/regions";
 
 // 카카오맵 JS SDK를 동적으로 로드해 지도를 렌더링하고,
 // /api/trades 에서 받은 실거래가 단지를 마커로 표시하는 클라이언트 컴포넌트.
 // SDK는 카카오 디벨로퍼스에 등록한 사이트 도메인(http://localhost:3000)에서만 동작.
 
-// 지역(LAWD_CD = 법정동 시군구 5자리, 행정표준코드) — 서울 25구 + 경기 시군구.
-// ⚠️ 경기 코드는 행정표준코드 기준으로 넣었으나 검증 권장(특히 일반구 개편 지역).
-const REGIONS = [
-  {
-    sido: "서울",
-    items: [
-      { code: "11110", name: "종로구" },
-      { code: "11140", name: "중구" },
-      { code: "11170", name: "용산구" },
-      { code: "11200", name: "성동구" },
-      { code: "11215", name: "광진구" },
-      { code: "11230", name: "동대문구" },
-      { code: "11260", name: "중랑구" },
-      { code: "11290", name: "성북구" },
-      { code: "11305", name: "강북구" },
-      { code: "11320", name: "도봉구" },
-      { code: "11350", name: "노원구" },
-      { code: "11380", name: "은평구" },
-      { code: "11410", name: "서대문구" },
-      { code: "11440", name: "마포구" },
-      { code: "11470", name: "양천구" },
-      { code: "11500", name: "강서구" },
-      { code: "11530", name: "구로구" },
-      { code: "11545", name: "금천구" },
-      { code: "11560", name: "영등포구" },
-      { code: "11590", name: "동작구" },
-      { code: "11620", name: "관악구" },
-      { code: "11650", name: "서초구" },
-      { code: "11680", name: "강남구" },
-      { code: "11710", name: "송파구" },
-      { code: "11740", name: "강동구" },
-    ],
-  },
-  {
-    sido: "경기",
-    items: [
-      { code: "41111", name: "수원시 장안구" },
-      { code: "41113", name: "수원시 권선구" },
-      { code: "41115", name: "수원시 팔달구" },
-      { code: "41117", name: "수원시 영통구" },
-      { code: "41131", name: "성남시 수정구" },
-      { code: "41133", name: "성남시 중원구" },
-      { code: "41135", name: "성남시 분당구" },
-      { code: "41150", name: "의정부시" },
-      { code: "41171", name: "안양시 만안구" },
-      { code: "41173", name: "안양시 동안구" },
-      { code: "41190", name: "부천시" },
-      { code: "41210", name: "광명시" },
-      { code: "41220", name: "평택시" },
-      { code: "41250", name: "동두천시" },
-      { code: "41271", name: "안산시 상록구" },
-      { code: "41273", name: "안산시 단원구" },
-      { code: "41281", name: "고양시 덕양구" },
-      { code: "41285", name: "고양시 일산동구" },
-      { code: "41287", name: "고양시 일산서구" },
-      { code: "41290", name: "과천시" },
-      { code: "41310", name: "구리시" },
-      { code: "41360", name: "남양주시" },
-      { code: "41370", name: "오산시" },
-      { code: "41390", name: "시흥시" },
-      { code: "41410", name: "군포시" },
-      { code: "41430", name: "의왕시" },
-      { code: "41450", name: "하남시" },
-      { code: "41461", name: "용인시 처인구" },
-      { code: "41463", name: "용인시 기흥구" },
-      { code: "41465", name: "용인시 수지구" },
-      { code: "41480", name: "파주시" },
-      { code: "41500", name: "이천시" },
-      { code: "41550", name: "안성시" },
-      { code: "41570", name: "김포시" },
-      { code: "41590", name: "화성시" },
-      { code: "41610", name: "광주시" },
-      { code: "41630", name: "양주시" },
-      { code: "41650", name: "포천시" },
-      { code: "41670", name: "여주시" },
-      { code: "41800", name: "연천군" },
-      { code: "41820", name: "가평군" },
-      { code: "41830", name: "양평군" },
-    ],
-  },
-];
-
-const ALL_REGIONS = REGIONS.flatMap((g) => g.items);
-
-// 전용면적(㎡) 구간. 거래 excluUseAr 기준 [min, max).
+// 전용면적(㎡) 구간 필터. 거래 excluUseAr 기준 [min, max).
 const AREA_FILTERS = [
   { value: "all", label: "전체 면적", min: 0, max: Infinity },
   { value: "s", label: "~60㎡ (~18평)", min: 0, max: 60 },
@@ -108,6 +25,8 @@ const PRICE_FILTERS = [
   { value: "p4", label: "9~12억", min: 90000, max: 120000 },
 ];
 
+const PYEONG = 3.3058; // 1평 = 3.3058㎡
+
 // 만원 단위 → "12억 3,400" 형태 한글 금액.
 function formatManwon(manwon) {
   const v = Math.round(manwon);
@@ -123,7 +42,7 @@ function shortDate(ymd) {
   return ymd ? ymd.slice(2).replace(/-/g, ".") : "";
 }
 
-// 거래 배열 통계: 건수/평균/최근(날짜 최댓값) 거래.
+// 거래 배열 통계: 건수/평균/최근(날짜 최댓값).
 function summarize(trades) {
   if (!trades.length) return null;
   const sum = trades.reduce((s, t) => s + t.dealAmount, 0);
@@ -134,6 +53,31 @@ function summarize(trades) {
     recentAmount: recent.dealAmount,
     recentDate: recent.dealYmd,
   };
+}
+
+// 단지 거래를 전용면적(정수 ㎡)별로 묶어 평형별 가격 통계 반환.
+function groupByPyeong(trades) {
+  const m = new Map();
+  for (const t of trades) {
+    const key = Math.round(t.area);
+    if (!m.has(key)) m.set(key, []);
+    m.get(key).push(t);
+  }
+  return [...m.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([m2, arr]) => {
+      const s = summarize(arr);
+      return {
+        m2,
+        pyeong: Math.round(m2 / PYEONG),
+        count: s.count,
+        avg: s.avg,
+        min: Math.min(...arr.map((t) => t.dealAmount)),
+        max: Math.max(...arr.map((t) => t.dealAmount)),
+        recentAmount: s.recentAmount,
+        recentDate: s.recentDate,
+      };
+    });
 }
 
 // 기준일(오늘)부터 과거로 N개월치 거래연월 옵션. value=YYYYMM, label="YYYY.MM".
@@ -156,20 +100,29 @@ export default function KakaoMap() {
   const containerRef = useRef(null);
   const mapRef = useRef(null);
   const overlaysRef = useRef([]);
-  const dataRef = useRef(null); // 마지막 /api/trades 응답 (필터는 재요청 없이 재렌더)
+  const dataRef = useRef(null);
   const [ready, setReady] = useState(false);
   const [status, setStatus] = useState("지도 로딩 중…");
-  const [lawdCd, setLawdCd] = useState("11680"); // 기본: 강남구
+  const [lawdCd, setLawdCd] = useState("11680");
   const [dealYmd, setDealYmd] = useState(() => recentMonths(1)[0].value);
   const [area, setArea] = useState("all");
   const [price, setPrice] = useState("all");
   const [loading, setLoading] = useState(false);
+  const [selected, setSelected] = useState(null); // 세부정보 패널 대상 단지
 
   const months = useMemo(() => recentMonths(13), []);
-  const regionName = useMemo(
-    () => ALL_REGIONS.find((g) => g.code === lawdCd)?.name ?? lawdCd,
-    [lawdCd]
-  );
+  const regionLabel = useMemo(() => regionName(lawdCd), [lawdCd]);
+
+  // 세부정보 패널용 평형별 통계 (선택 단지의 전체 거래 기준).
+  const detail = useMemo(() => {
+    if (!selected) return null;
+    const ts = selected.trades || [];
+    return {
+      overall: summarize(ts),
+      buildYear: ts[0]?.buildYear,
+      groups: groupByPyeong(ts),
+    };
+  }, [selected]);
 
   // 지도 초기화 (1회)
   useEffect(() => {
@@ -205,14 +158,12 @@ export default function KakaoMap() {
     return () => script.removeEventListener("load", initMap);
   }, []);
 
-  // 지도 준비 또는 지역/연월 변경 시 실거래가 재로드.
   useEffect(() => {
     if (!ready) return;
     loadTrades(lawdCd, dealYmd);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, lawdCd, dealYmd]);
 
-  // 면적/가격 필터만 바뀌면 재요청 없이 마커만 다시 그린다.
   useEffect(() => {
     if (!ready || !dataRef.current) return;
     renderMarkers();
@@ -221,7 +172,8 @@ export default function KakaoMap() {
 
   async function loadTrades(code, ymd) {
     setLoading(true);
-    setStatus(`${regionName} ${ymd.slice(0, 4)}.${ymd.slice(4)} 실거래가 불러오는 중…`);
+    setSelected(null);
+    setStatus(`${regionLabel} ${ymd.slice(0, 4)}.${ymd.slice(4)} 실거래가 불러오는 중…`);
     try {
       const res = await fetch(`/api/trades?lawdCd=${code}&dealYmd=${ymd}`);
       const data = await res.json();
@@ -238,7 +190,7 @@ export default function KakaoMap() {
     }
   }
 
-  // dataRef + 면적/가격 필터로 마커를 다시 그린다.
+  // dataRef + 면적/가격 필터로 마커를 다시 그린다. 마커 클릭 → 세부정보 패널.
   function renderMarkers() {
     const data = dataRef.current;
     if (!data) return;
@@ -257,23 +209,21 @@ export default function KakaoMap() {
     data.complexes
       .filter((c) => c.lat != null)
       .forEach((c) => {
-        // 가격 구간으로 먼저 거른다 (면적별 표는 이 안에서 다시 면적으로 나눔).
-        const priced = (c.trades || []).filter(
-          (t) => t.dealAmount >= pBucket.min && t.dealAmount < pBucket.max
-        );
-        // 마커가 대표하는 거래 = 가격 + 선택 면적 구간.
-        const hits = priced.filter(
-          (t) => t.area >= aBucket.min && t.area < aBucket.max
+        const hits = (c.trades || []).filter(
+          (t) =>
+            t.dealAmount >= pBucket.min &&
+            t.dealAmount < pBucket.max &&
+            t.area >= aBucket.min &&
+            t.area < aBucket.max
         );
         const stat = summarize(hits);
-        if (!stat) return; // 조건에 맞는 거래 없는 단지는 숨김
+        if (!stat) return;
 
         const pos = new kakao.maps.LatLng(c.lat, c.lng);
         bounds.extend(pos);
         shownComplexes += 1;
         shownTrades += stat.count;
 
-        // 마커: 평균 시세 + 단지명
         const el = document.createElement("div");
         el.className = "trade-pin";
         el.innerHTML = `<b>평균 ${formatManwon(stat.avg)}</b><span>${c.aptNm}</span>`;
@@ -286,13 +236,7 @@ export default function KakaoMap() {
         overlay.setMap(map);
         overlaysRef.current.push(overlay);
 
-        // 인포윈도우: 요약 + (면적 전체일 때) 평수별 평균/최근 표
-        const iw = new kakao.maps.InfoWindow({
-          content: buildInfo(c, priced, hits, stat, aBucket),
-        });
-        el.addEventListener("click", () => {
-          iw.open(map, new kakao.maps.Marker({ position: pos, map }));
-        });
+        el.addEventListener("click", () => setSelected(c));
       });
 
     if (shownComplexes) map.setBounds(bounds);
@@ -307,40 +251,9 @@ export default function KakaoMap() {
     const tagTxt = tags ? ` · ${tags}` : "";
     setStatus(
       shownComplexes
-        ? `${regionName} ${ymd.slice(0, 4)}.${ymd.slice(4)}${tagTxt} · 거래 ${shownTrades}건 / 단지 ${shownComplexes}곳`
-        : `${regionName} ${ymd.slice(0, 4)}.${ymd.slice(4)}${tagTxt} · 조건에 맞는 거래 없음`
+        ? `${regionLabel} ${ymd.slice(0, 4)}.${ymd.slice(4)}${tagTxt} · 거래 ${shownTrades}건 / 단지 ${shownComplexes}곳`
+        : `${regionLabel} ${ymd.slice(0, 4)}.${ymd.slice(4)}${tagTxt} · 조건에 맞는 거래 없음`
     );
-  }
-
-  // 인포윈도우 HTML. priced=가격구간 거래, hits=가격+면적 거래, stat=hits 요약.
-  function buildInfo(c, priced, hits, stat, aBucket) {
-    let rows = "";
-    // 면적 전체 선택 시 평수별 평균/최근을 표로 보여준다.
-    if (area === "all") {
-      for (const b of AREA_FILTERS) {
-        if (b.value === "all") continue;
-        const part = priced.filter((t) => t.area >= b.min && t.area < b.max);
-        const s = summarize(part);
-        if (!s) continue;
-        rows += `<tr>
-          <td style="padding:2px 6px 2px 0">${b.label.split(" ")[0]}</td>
-          <td style="padding:2px 6px;text-align:right">${s.count}건</td>
-          <td style="padding:2px 6px;text-align:right">평균 ${formatManwon(s.avg)}</td>
-          <td style="padding:2px 0 2px 6px;text-align:right;color:#2563eb">최근 ${formatManwon(s.recentAmount)}</td>
-        </tr>`;
-      }
-    }
-    const table = rows
-      ? `<table style="margin-top:6px;border-top:1px solid #eee;padding-top:4px;font-size:11px;border-collapse:collapse">
-          <tbody>${rows}</tbody></table>`
-      : "";
-    return `<div style="padding:9px 11px;font-size:12px;line-height:1.55;min-width:200px">
-      <b>${c.aptNm}</b> <span style="color:#888">(${c.umdNm})</span><br/>
-      거래 ${stat.count}건${area === "all" ? "" : ` · ${aBucket.label.split(" ")[0]}`}<br/>
-      평균 시세 <b>${formatManwon(stat.avg)}</b><br/>
-      최근 거래 <b style="color:#2563eb">${formatManwon(stat.recentAmount)}</b> <span style="color:#888">(${shortDate(stat.recentDate)})</span>
-      ${table}
-    </div>`;
   }
 
   return (
@@ -348,23 +261,7 @@ export default function KakaoMap() {
       <div ref={containerRef} style={{ width: "100%", height: "100%" }} />
 
       {/* 좌측 상단 컨트롤 패널 */}
-      <div
-        style={{
-          position: "absolute",
-          top: 12,
-          left: 12,
-          zIndex: 10,
-          background: "rgba(255,255,255,0.96)",
-          padding: "10px 12px",
-          borderRadius: 10,
-          boxShadow: "0 1px 6px rgba(0,0,0,0.2)",
-          fontSize: 13,
-          display: "flex",
-          flexDirection: "column",
-          gap: 8,
-          minWidth: 270,
-        }}
-      >
+      <div style={controlPanel}>
         <div style={{ display: "flex", gap: 8 }}>
           <select
             value={lawdCd}
@@ -426,6 +323,75 @@ export default function KakaoMap() {
         </div>
       </div>
 
+      {/* 우측 세부정보 패널 */}
+      {selected && detail && (
+        <div style={detailPanel}>
+          <button onClick={() => setSelected(null)} style={closeBtn} aria-label="닫기">
+            ×
+          </button>
+          <div style={{ fontSize: 16, fontWeight: 700 }}>{selected.aptNm}</div>
+          <div style={{ fontSize: 12, color: "#6b7280", marginTop: 2 }}>
+            {regionLabel} {selected.umdNm}
+            {detail.buildYear ? ` · ${detail.buildYear}년 준공` : ""}
+          </div>
+
+          {detail.overall && (
+            <div
+              style={{
+                marginTop: 10,
+                padding: "8px 10px",
+                background: "#f3f4f6",
+                borderRadius: 8,
+                fontSize: 13,
+              }}
+            >
+              이 달 거래 <b>{detail.overall.count}건</b>
+              <br />
+              평균 시세 <b>{formatManwon(detail.overall.avg)}</b>
+              <br />
+              최근 거래{" "}
+              <b style={{ color: "#2563eb" }}>
+                {formatManwon(detail.overall.recentAmount)}
+              </b>{" "}
+              <span style={{ color: "#9ca3af" }}>
+                ({shortDate(detail.overall.recentDate)})
+              </span>
+            </div>
+          )}
+
+          <div style={{ marginTop: 12, fontSize: 12, fontWeight: 600 }}>
+            평형별 가격
+          </div>
+          <table style={{ width: "100%", fontSize: 12, borderCollapse: "collapse", marginTop: 4 }}>
+            <thead>
+              <tr style={{ color: "#6b7280", textAlign: "right" }}>
+                <th style={{ textAlign: "left", padding: "4px 0" }}>평형</th>
+                <th>건</th>
+                <th>평균</th>
+                <th>최근</th>
+              </tr>
+            </thead>
+            <tbody>
+              {detail.groups.map((g) => (
+                <tr key={g.m2} style={{ borderTop: "1px solid #eee" }}>
+                  <td style={{ textAlign: "left", padding: "4px 0" }}>
+                    {g.m2}㎡ <span style={{ color: "#9ca3af" }}>({g.pyeong}평)</span>
+                  </td>
+                  <td style={{ textAlign: "right" }}>{g.count}</td>
+                  <td style={{ textAlign: "right" }}>{formatManwon(g.avg)}</td>
+                  <td style={{ textAlign: "right", color: "#2563eb" }}>
+                    {formatManwon(g.recentAmount)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div style={{ marginTop: 6, fontSize: 11, color: "#9ca3af" }}>
+            ㎡=전용면적 · 평형별 최저~최고는 향후 추가
+          </div>
+        </div>
+      )}
+
       <style>{`
         .trade-pin {
           display: flex; flex-direction: column; align-items: center;
@@ -442,6 +408,48 @@ export default function KakaoMap() {
     </div>
   );
 }
+
+const controlPanel = {
+  position: "absolute",
+  top: 12,
+  left: 12,
+  zIndex: 10,
+  background: "rgba(255,255,255,0.96)",
+  padding: "10px 12px",
+  borderRadius: 10,
+  boxShadow: "0 1px 6px rgba(0,0,0,0.2)",
+  fontSize: 13,
+  display: "flex",
+  flexDirection: "column",
+  gap: 8,
+  minWidth: 270,
+};
+
+const detailPanel = {
+  position: "absolute",
+  top: 12,
+  right: 12,
+  bottom: 12,
+  zIndex: 10,
+  width: 300,
+  overflowY: "auto",
+  background: "#fff",
+  padding: "16px 18px",
+  borderRadius: 12,
+  boxShadow: "0 2px 12px rgba(0,0,0,0.25)",
+};
+
+const closeBtn = {
+  position: "absolute",
+  top: 10,
+  right: 12,
+  border: "none",
+  background: "none",
+  fontSize: 22,
+  lineHeight: 1,
+  cursor: "pointer",
+  color: "#9ca3af",
+};
 
 const selectStyle = {
   flex: 1,
