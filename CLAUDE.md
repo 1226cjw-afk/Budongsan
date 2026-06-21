@@ -34,7 +34,9 @@
 ## 개발 메모
 - 실행: `npm run dev` → http://localhost:3000 (카카오 디벨로퍼스에 이 도메인 등록돼 있어야 지도 뜸)
 - 구조: App Router. 지도/세부패널은 `app/components/KakaoMap.js`(클라이언트, SDK `autoload=false`로 동적 로드)
-- 코드 위치: `app/lib/`에 로직 집중 — `trades.js`(수집·지오코딩·캐시 공용), `regions.js`(서울25+경기41 + 지오코딩 지역검증), `loanPolicy.js`(LTV/DSR). API: `/api/trades`(N개월 병합), `/api/trend`(월별 추세), `/api/favorites`(CRUD)
+- 코드 위치: `app/lib/`에 로직 집중 — `trades.js`(수집·지오코딩·캐시 공용), `regions.js`(서울25+경기41 + 지오코딩 지역검증), `loanPolicy.js`(LTV/DSR), `kapt.js`(공동주택 세대수 등). API: `/api/trades`(N개월 병합), `/api/trend`(월별 추세, `area`로 평형별), `/api/favorites`(CRUD), `/api/cron/refresh`(즐겨찾기 지역 최근2개월 강제 재수집), `/api/complex-info`(세대수/동수)
+- 단지 세대수: 실거래가 API엔 없음 → 국토부 공동주택 API 별도(`kapt.js`). **현행 엔드포인트(2026-06 검증)**: 목록 `AptListService3/getSigunguAptList3`(시군구→kaptCode), 기본정보 `AptBasisInfoServiceV4/getAphusBassInfoV4`(kaptCode→`kaptdaCnt`세대수). ⚠️ **둘 다 data.go.kr 활용신청 필요**(자동승인). 미승인 시 HTTP 403 Forbidden(구버전 V2/V3는 500 "Unexpected errors"=폐기). 미승인이어도 `{kaptCode:null}`로 graceful(세대수만 생략). 인메모리 캐시(서버수명). 뉴스는 네이버 뉴스 검색 링크(키 불필요)
+- 자동 갱신: `vercel.json` cron이 `/api/cron/refresh`를 매일 호출(배포 후 동작, Hobby는 1일1회). 보호용 `CRON_SECRET` env — 설정 시 `Authorization: Bearer <secret>` 필요(Vercel Cron이 자동 첨부). **배포 시 반드시 설정**(미설정이면 누구나 국토부 호출 트리거 가능). 로컬은 미설정이라 curl로 바로 호출 가능. `/api/trades` 응답에 `fetchedAt`(캐시 신선도) 포함
 - 스택 버전: Next.js 16 + React 19 (수동 스캐폴딩, `create-next-app` 미사용 — 기존 .md 파일 충돌 회피)
 - 변경 검증: `npx next build` (컴파일/타입). `next lint --file` 옵션은 없음.
 - API 동작 확인: `npm run dev`(백그라운드) → 로그 "Ready" 대기 → `curl "http://localhost:3000/api/trades?lawdCd=11680&dealYmd=202605"`

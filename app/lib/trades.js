@@ -122,6 +122,20 @@ export async function fetchRawMonth(lawdCd, ymd, { refresh = false } = {}) {
   return trades;
 }
 
+// 주어진 달들 중 캐시에 저장된 가장 최근 갱신 시각(ISO). 데이터 신선도 표시용.
+export async function latestFetchedAt(lawdCd, ymds) {
+  if (!supabaseAdmin) return null;
+  const { data } = await supabaseAdmin
+    .from("trade_raw_cache")
+    .select("fetched_at")
+    .eq("lawd_cd", lawdCd)
+    .in("deal_ymd", ymds)
+    .order("fetched_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  return data?.fetched_at ?? null;
+}
+
 const GEOCODE_CONCURRENCY = 8; // 미캐시 단지 동시 지오코딩 수
 
 // 여러 단지 좌표를 한 번에 구한다 → 캐시는 1회 일괄 조회, 미스만 병렬 지오코딩 후 일괄 저장.

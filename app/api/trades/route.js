@@ -1,7 +1,7 @@
 // 국토부 실거래가 → 카카오 지오코딩 → JSON. 여러 달(기본 3개월) 병합해 단지별로 반환.
 // 수집/지오코딩/캐시 로직은 ../../lib/trades 에 공용화.
 
-import { fetchRawMonth, geocodeMany, monthsBack } from "../../lib/trades";
+import { fetchRawMonth, geocodeMany, monthsBack, latestFetchedAt } from "../../lib/trades";
 
 export async function GET(request) {
   const { searchParams } = new URL(request.url);
@@ -45,6 +45,7 @@ export async function GET(request) {
     jibun: g[0].jibun,
   }));
   const coordMap = await geocodeMany(lawdCd, items);
+  const fetchedAt = await latestFetchedAt(lawdCd, ymds); // 캐시 신선도
 
   const complexes = [];
   for (const [, group] of byApt) {
@@ -71,6 +72,7 @@ export async function GET(request) {
     total: trades.length,
     complexCount: complexes.length,
     geocoded: complexes.filter((c) => c.lat != null).length,
+    fetchedAt,
     complexes,
   });
 }
