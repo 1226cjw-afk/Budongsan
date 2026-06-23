@@ -33,6 +33,7 @@
 
 ## 개발 메모
 - 실행: `npm run dev` → http://localhost:3000 (카카오 디벨로퍼스에 이 도메인 등록돼 있어야 지도 뜸)
+- **배포(가동 중)**: Vercel **대시보드** 방식 → https://budongsan-virid.vercel.app (env 7종 등록·카카오 Web 도메인 등록 완료). ⚠️ **Vercel CLI는 이 머신 불가**(한글 계정명→illegal HTTP header). REST 키엔 IP 제한 걸지 말 것(Vercel IP 동적)
 - 구조: App Router. 지도/세부패널은 `app/components/KakaoMap.js`(클라이언트, SDK `autoload=false`로 동적 로드)
 - 코드 위치: `app/lib/`에 로직 집중 — `trades.js`(수집·지오코딩·캐시 공용), `regions.js`(서울25+경기41 + 지오코딩 지역검증), `loanPolicy.js`(LTV/DSR), `kapt.js`(공동주택 세대수 등). API: `/api/trades`(N개월 병합), `/api/trend`(월별 추세, `area`로 평형별), `/api/favorites`(CRUD), `/api/cron/refresh`(즐겨찾기 지역 최근2개월 강제 재수집), `/api/complex-info`(세대수/동수)
 - 단지 세대수: 실거래가 API엔 없음 → 국토부 공동주택 API 별도(`kapt.js`). **현행 엔드포인트(2026-06 검증)**: 목록 `AptListService3/getSigunguAptList3`(시군구→kaptCode), 기본정보 `AptBasisInfoServiceV4/getAphusBassInfoV4`(kaptCode→`kaptdaCnt`세대수). ⚠️ **둘 다 data.go.kr 활용신청 필요**(자동승인). 미승인 시 HTTP 403 Forbidden(구버전 V2/V3는 500 "Unexpected errors"=폐기). 미승인이어도 `{kaptCode:null}`로 graceful(세대수만 생략). 인메모리 캐시(서버수명). 뉴스는 네이버 뉴스 검색 링크(키 불필요)

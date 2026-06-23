@@ -3,14 +3,24 @@
 ## 상태: 개발 착수 (2026-06-17 시작)
 
 ## ▶ 다음 세션 시작점 (여기서 이어서)
-**2단계 대출 + 3단계 자동 갱신까지 완료.** 남은 후보:
-- **배포(Vercel)** — 환경변수 5종(키4 + `CRON_SECRET`) 등록 + 카카오 도메인 추가.
-  배포해야 cron 자동 갱신이 실제로 돌고, 전 기능을 실사용 가능. (지금 유력 다음 후보)
+**MVP~3단계 + Vercel 배포까지 완료. 실서비스 가동 중** → https://budongsan-virid.vercel.app
+남은 후보:
 - 즐겨찾기 타지역 마커 표시(현재는 현재 지역만 금색).
 - 경기 일부 지오코딩률 개선(분당 145건→35곳).
 - 추세 3년(년도별) 확장 보류(현재 월별 12개월).
-- ⚠️ **대출 UI·자동 갱신은 브라우저 동작확인 필요**(localStorage 저장/세부패널/🔄 버튼).
+- (선택) 커스텀 도메인 연결 / 2FA 설정.
 - MCP: `.mcp.json`에 PAT 입력 완료. **Claude 재시작해야 MCP 서버 로드됨**
+
+## ✅ Vercel 배포 완료 (2026-06-23)
+- **prod URL**: https://budongsan-virid.vercel.app — 대시보드 import 방식(GitHub `Budongsan` 레포).
+  ⚠️ **Vercel CLI는 이 머신에서 불가**(한글 계정명→illegal HTTP header) → 대시보드로 진행.
+- **환경변수 7종** 등록(과거 "5종"은 오기): `NEXT_PUBLIC_KAKAO_MAP_KEY`/`KAKAO_REST_API_KEY`/
+  `DATA_GO_KR_KEY`/`NEXT_PUBLIC_SUPABASE_URL`/`NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`/
+  `SUPABASE_SECRET_KEY` + `CRON_SECRET`.
+- **카카오 디벨로퍼스 Web 플랫폼**에 `https://budongsan-virid.vercel.app` 사이트 도메인 등록(지도 표시 조건).
+- **검증**(2026-06-23): 지도+마커 정상 · prod `/api/trades` 137단지 100% 지오코딩 ·
+  cron `/api/cron/refresh` 인증 없음/틀린 키 → **401**(CRON_SECRET 보호 확인).
+- 브라우저 동작확인(localStorage·평형별 대출·도움말 모달·지도클릭→근접단지) 사용자 "통과" 확인.
 
 ## ✅ 단지 패널 보강: 세대수·뉴스·평형별 추세 (2026-06-21)
 - **평형별 시세 추세 + Y축 가격**: `TrendChart` 재작성 — 좌측 Y축에 가격 눈금(억) +
