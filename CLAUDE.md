@@ -10,6 +10,19 @@
 - 지도: **카카오맵 API 확정** (2026-06-17) — 키 2종: **JS 키**(`NEXT_PUBLIC_KAKAO_MAP_KEY`, 클라이언트 지도용) / **REST 키**(`KAKAO_REST_API_KEY`, 서버 지오코딩용, 비밀). 둘 다 카카오 디벨로퍼스 `앱 → 플랫폼 키`에서 발급
 - 배포: **Vercel 가동 중** → https://budongsan-virid.vercel.app (상세는 아래 개발 메모)
 
+## 환경변수 (.env.local 로컬 / Vercel 대시보드)
+값·비밀키는 절대 커밋 금지(`.env.local`·`.mcp.json` gitignore). 아래는 **이름만** 기록.
+| 변수 | 노출 | 용도 |
+|---|---|---|
+| `NEXT_PUBLIC_KAKAO_MAP_KEY` | 클라 | 지도 JS SDK |
+| `KAKAO_REST_API_KEY` | 서버 | 주소→좌표 지오코딩 (IP 제한 걸지 말 것) |
+| `DATA_GO_KR_KEY` | 서버 | 국토부 실거래가·공동주택 API |
+| `NEXT_PUBLIC_SUPABASE_URL` | 클라 | Supabase 주소 |
+| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | 클라 | Supabase 공개키(현재 코드 미사용, Vercel엔 등록됨) |
+| `SUPABASE_SECRET_KEY` | 서버 | Supabase secret(RLS 우회, 서버 전용) |
+| `CRON_SECRET` | 서버 | cron 보호 Bearer (배포 시 필수, 미설정 시 누구나 트리거) |
+> Vercel은 7종 모두 등록. 변경 시 Vercel Settings → 변경 후 Redeploy 필요.
+
 ## ⚠️ 데이터 출처 — 중요
 참조 앱(네이버 부동산/호갱노노)은 **공개 API가 없고, 직접 스크래핑은 약관 위반·법적 리스크**.
 대신 공식·합법 경로를 사용한다:
