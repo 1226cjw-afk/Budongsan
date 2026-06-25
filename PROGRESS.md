@@ -11,6 +11,18 @@
 - (선택) 커스텀 도메인 연결 / 2FA 설정.
 - MCP: `.mcp.json`에 PAT 입력 완료. **Claude 재시작해야 MCP 서버 로드됨**
 
+## ✅ 세대수 활용신청 승인 + JSON 파싱 수정 (2026-06-25)
+- **공동주택 API 2개 활용신청 승인 확인**(목록 V3 / 기본정보 V4 모두 HTTP 200).
+- ⚠️ **결정적 발견**: 이 계열은 응답이 **JSON**(`application/json`) — 실거래가 API(XML 전용)와
+  정반대. `_type=xml`을 줘도 JSON으로 옴. 그런데 `kapt.js`는 XML 정규식(`<item>`)으로 파싱하고
+  있어 **승인됐어도 세대수가 안 잡히는 상태**였음.
+- **`kapt.js`를 JSON 파싱으로 교체**: `fetchJson`(JSON.parse, 실패 시 null→graceful) +
+  `asArray`(items 배열/단일 정규화). 응답 경로 `response.body.items[]`(목록)/`response.body.item`(기본정보).
+  공개 인터페이스·캐시·매칭 로직은 그대로.
+- 검증(end-to-end): 비산대주파크빌 131세대/2동, 평촌어바인퍼스트 3850/34, 은마 4424/28,
+  압구정 현대(부분매칭) 1924/27. `npx next build` 통과.
+- → 패널 부제목 "N세대 · M개동" 이제 실제 표시됨(브라우저 최종 확인 권장).
+
 ## ✅ Vercel 배포 완료 (2026-06-23)
 - **prod URL**: https://budongsan-virid.vercel.app — 대시보드 import 방식(GitHub `Budongsan` 레포).
   ⚠️ **Vercel CLI는 이 머신에서 불가**(한글 계정명→illegal HTTP header) → 대시보드로 진행.

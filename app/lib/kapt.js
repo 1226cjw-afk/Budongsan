@@ -1,11 +1,11 @@
 // 국토부 공동주택 단지 정보(세대수 등) 조회. 실거래가 API엔 세대수가 없어 별도 보강.
 //
-// ⚠️ data.go.kr에서 아래 2개 API **활용신청** 필요(승인 후 동작, 미승인 시 빈 응답 → 세대수 '—'):
-//   - 공동주택 단지 목록제공 서비스 (15057332)  → kaptCode 찾기
-//   - 공동주택 기본 정보제공 서비스 (15058453)   → 세대수/동수/사용승인일
-// 검증(2026-06-21): 현행 엔드포인트는 **V3 목록 / V4 기본정보**. 미승인 시 둘 다 HTTP 403
-//   "Forbidden"(구버전 V2/V3는 500 "Unexpected errors"=폐기). 같은 1613000 계열이라
-//   http/User-Agent/XML quirk 동일, 키는 DATA_GO_KR_KEY 공용. (활용신청은 자동승인)
+// ⚠️ data.go.kr에서 아래 2개 API **활용신청** 필요(승인 후 동작). **2026-06-25 승인 확인**.
+//   - 공동주택 단지 목록제공 서비스 (AptListService3/getSigunguAptList3)     → kaptCode 찾기
+//   - 공동주택 기본 정보제공 서비스 (AptBasisInfoServiceV4/getAphusBassInfoV4) → 세대수/동수/사용승인일
+// ⚠️ 이 계열은 실거래가 API와 달리 **응답이 JSON**(content-type application/json).
+//   `_type=xml`을 줘도 JSON으로 옴 → **JSON으로 파싱**. http/User-Agent quirk·키(DATA_GO_KR_KEY)는 공용.
+//   미승인/오류 시 JSON 파싱 실패(null) → graceful: { kaptCode: null }.
 
 const LIST_ENDPOINT = "http://apis.data.go.kr/1613000/AptListService3/getSigunguAptList3";
 const INFO_ENDPOINT = "http://apis.data.go.kr/1613000/AptBasisInfoServiceV4/getAphusBassInfoV4";
@@ -14,22 +14,31 @@ const INFO_ENDPOINT = "http://apis.data.go.kr/1613000/AptBasisInfoServiceV4/getA
 const dirCache = new Map(); // lawdCd → [{ kaptCode, kaptName, as3 }]
 const infoCache = new Map(); // kaptCode → { households, dongCnt, useDate, heat }
 
-function pick(block, tag) {
-  const m = block.match(new RegExp(`<${tag}>([^<]*)</${tag}>`));
-  return m ? m[1].trim() : "";
-}
-
 // 단지명 정규화: 공백 제거 + 끝의 "아파트" 제거(매칭 유연화).
 function norm(s) {
   return (s || "").replace(/\s+/g, "").replace(/아파트$/, "");
 }
 
-async function fetchXml(url) {
+// data.go.kr JSON은 응답마다 items가 배열 / {item:[...]} / 단일 객체로 섞임 → 배열로 정규화.
+function asArray(items) {
+  if (!items) return [];
+  if (Array.isArray(items)) return items;
+  if (Array.isArray(items.item)) return items.item;
+  if (items.item) return [items.item];
+  return [];
+}
+
+async function fetchJson(url) {
   const res = await fetch(url, {
     headers: { "User-Agent": "RealEstate_Map/0.1" },
     cache: "no-store",
   });
-  return res.text();
+  const text = await res.text();
+  try {
+    return JSON.parse(text); // 미승인/오류(HTML·XML 에러문서)면 파싱 실패 → null
+  } catch {
+    return null;
+  }
 }
 
 // 시군구 단지 목록 → [{kaptCode, kaptName, as3(읍면동)}]. 결과 있을 때만 캐시.
@@ -40,12 +49,11 @@ async function fetchSigunguDir(lawdCd) {
   const url =
     `${LIST_ENDPOINT}?serviceKey=${encodeURIComponent(key)}` +
     `&sigunguCode=${lawdCd}&pageNo=1&numOfRows=10000`;
-  const xml = await fetchXml(url);
-  const items = xml.match(/<item>[\s\S]*?<\/item>/g) || [];
-  const list = items.map((b) => ({
-    kaptCode: pick(b, "kaptCode"),
-    kaptName: pick(b, "kaptName"),
-    as3: pick(b, "as3"),
+  const json = await fetchJson(url);
+  const list = asArray(json?.response?.body?.items).map((x) => ({
+    kaptCode: x.kaptCode || "",
+    kaptName: x.kaptName || "",
+    as3: x.as3 || "",
   }));
   if (list.length) dirCache.set(lawdCd, list); // 미승인/오류(빈 응답)는 캐시 안 함
   return list;
@@ -68,12 +76,13 @@ async function fetchKaptInfo(kaptCode) {
   if (infoCache.has(kaptCode)) return infoCache.get(kaptCode);
   const key = process.env.DATA_GO_KR_KEY;
   const url = `${INFO_ENDPOINT}?serviceKey=${encodeURIComponent(key)}&kaptCode=${kaptCode}`;
-  const xml = await fetchXml(url);
+  const json = await fetchJson(url);
+  const it = json?.response?.body?.item || {};
   const info = {
-    households: Number(pick(xml, "kaptdaCnt")) || null, // 총 세대수
-    dongCnt: Number(pick(xml, "kaptDongCnt")) || null, // 동수
-    useDate: pick(xml, "kaptUsedate") || null, // 사용승인일 YYYYMMDD
-    heat: pick(xml, "codeHeatNm") || null, // 난방방식
+    households: Number(it.kaptdaCnt) || null, // 총 세대수 (예: 131.0)
+    dongCnt: Number(it.kaptDongCnt) || null, // 동수 (문자열 "2")
+    useDate: it.kaptUsedate ? String(it.kaptUsedate) : null, // 사용승인일 YYYYMMDD
+    heat: it.codeHeatNm || null, // 난방방식
   };
   if (info.households) infoCache.set(kaptCode, info);
   return info;
