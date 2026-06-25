@@ -308,6 +308,17 @@ export default function KakaoMap() {
     });
   }
 
+  // 한 단지의 평형 중 하나라도 보유자산으로 매수 가능하면 true(마커 초록), 전부 불가면 false(빨강).
+  // priceBasis(최근/평균) 기준가로 평형별 대출·필요자금을 계산해 보유자산과 비교.
+  function isComplexBuyable(hits) {
+    for (const g of groupByPyeong(hits)) {
+      const gp = priceBasis === "recent" ? g.recentAmount : g.avg;
+      const ln = loanForPrice(gp);
+      if (ln && ln.maxLoan > 0 && assets >= ln.requiredCash) return true;
+    }
+    return false;
+  }
+
   // 지도 초기화 (1회) — services 라이브러리로 좌표→지역 변환 + 빈 곳 클릭→가까운 단지.
   useEffect(() => {
     const KEY = process.env.NEXT_PUBLIC_KAKAO_MAP_KEY;
@@ -414,7 +425,7 @@ export default function KakaoMap() {
     if (!ready || !dataRef.current) return;
     renderMarkers();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [area, price, favorites]);
+  }, [area, price, favorites, profile, priceBasis]);
 
   // 단지 바뀌면 추세 평형 선택 초기화.
   useEffect(() => {
@@ -533,11 +544,15 @@ export default function KakaoMap() {
     const pB = PRICE_FILTERS.find((p) => p.value === price) ?? PRICE_FILTERS[0];
     const favs = favSetRef.current;
 
+    // 자금(보유자산)이 설정된 경우에만 구매가능 여부로 마커를 색칠한다.
+    const affordMode = hasProfile && assets > 0;
+
     overlaysRef.current.forEach((o) => o.setMap(null));
     overlaysRef.current = [];
     const bounds = new kakao.maps.LatLngBounds();
     let shownComplexes = 0;
     let shownTrades = 0;
+    let buyableCount = 0;
 
     data.complexes
       .filter((c) => c.lat != null)
@@ -557,9 +572,17 @@ export default function KakaoMap() {
         shownComplexes += 1;
         shownTrades += stat.count;
 
+        // 구매가능: 어떤 평형이든 보유자산으로 필요자금을 댈 수 있으면 true.
+        const buyable = affordMode ? isComplexBuyable(hits) : null;
+        if (buyable) buyableCount += 1;
+
         const isFav = favs.has(favKey(data.lawdCd, c.umdNm, c.aptNm));
         const el = document.createElement("div");
-        el.className = "trade-pin" + (isFav ? " trade-pin--fav" : "");
+        let cls = "trade-pin";
+        if (buyable === true) cls += " trade-pin--ok";
+        else if (buyable === false) cls += " trade-pin--no";
+        else if (isFav) cls += " trade-pin--fav"; // 색칠모드 아닐 때만 금색
+        el.className = cls;
         el.innerHTML = `<b>${isFav ? "★ " : ""}평균 ${formatManwon(stat.avg)}</b><span>${c.aptNm}</span>`;
 
         const overlay = new kakao.maps.CustomOverlay({ position: pos, content: el, yAnchor: 1.2 });
@@ -576,9 +599,10 @@ export default function KakaoMap() {
     const tags = [area === "all" ? null : aB.label, price === "all" ? null : pB.label]
       .filter(Boolean)
       .join(" · ");
+    const buyTag = affordMode && shownComplexes ? ` · 🟢 구매가능 ${buyableCount}/${shownComplexes}곳` : "";
     setStatus(
       shownComplexes
-        ? `${regionName(data.lawdCd)} · 최근 ${MONTHS}개월${tags ? " · " + tags : ""} · 거래 ${shownTrades}건 / 단지 ${shownComplexes}곳`
+        ? `${regionName(data.lawdCd)} · 최근 ${MONTHS}개월${tags ? " · " + tags : ""} · 거래 ${shownTrades}건 / 단지 ${shownComplexes}곳${buyTag}`
         : `${regionName(data.lawdCd)} · 최근 ${MONTHS}개월${tags ? " · " + tags : ""} · 조건에 맞는 거래 없음`
     );
   }
@@ -676,6 +700,13 @@ export default function KakaoMap() {
             🔄 갱신
           </button>
         </div>
+        {hasProfile && assets > 0 && (
+          <div style={legendRow}>
+            <span style={legendItem}><span style={{ ...legendDot, background: C.green }} />구매가능</span>
+            <span style={legendItem}><span style={{ ...legendDot, background: C.red }} />자금부족</span>
+            <span style={{ color: C.muted }}>· {priceBasis === "recent" ? "최근가" : "평균가"} 기준</span>
+          </div>
+        )}
         {!isMobile && (
           <div style={hintLine}>지도 이동 → 지역 전환 · 빈 곳 클릭 → 가까운 단지</div>
         )}
@@ -893,6 +924,10 @@ export default function KakaoMap() {
         }
         .trade-pin--fav { background: #f59e0b; }
         .trade-pin--fav:hover { background: #d97706; }
+        .trade-pin--ok { background: #059669; }
+        .trade-pin--ok:hover { background: #047857; }
+        .trade-pin--no { background: #dc2626; }
+        .trade-pin--no:hover { background: #b91c1c; }
         .trade-pin b { font-size: 12px; font-weight: 700; }
         .trade-pin span { font-size: 9px; opacity: 0.85; max-width: 92px;
           overflow: hidden; text-overflow: ellipsis; }
@@ -934,6 +969,9 @@ const refreshBtn = {
 };
 const hintLine = { fontSize: 11, color: C.muted };
 const hintText = { fontSize: 12, color: C.muted, padding: "8px 0" };
+const legendRow = { display: "flex", alignItems: "center", gap: 10, fontSize: 11, color: C.sub };
+const legendItem = { display: "inline-flex", alignItems: "center", gap: 4 };
+const legendDot = { width: 9, height: 9, borderRadius: "50%", display: "inline-block" };
 
 const drawer = {
   marginTop: 2, borderTop: `1px solid ${C.divider}`, paddingTop: 10,
