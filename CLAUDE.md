@@ -49,12 +49,14 @@
 - **배포(가동 중)**: Vercel **대시보드** 방식 → https://budongsan-virid.vercel.app (env 7종 등록·카카오 Web 도메인 등록 완료). ⚠️ **Vercel CLI는 이 머신 불가**(한글 계정명→illegal HTTP header). REST 키엔 IP 제한 걸지 말 것(Vercel IP 동적)
   - GitHub `main`에 push하면 Vercel이 **자동 재배포**(대시보드 연결됨). env 변경은 Vercel 대시보드 Settings → 변경 후 Redeploy 필요. `vercel.json` cron은 push 시 자동 반영
 - 구조: App Router. 지도/세부패널은 `app/components/KakaoMap.js`(클라이언트, SDK `autoload=false`로 동적 로드)
+- `KakaoMap.js` 함정: 마커는 `useEffect([area,price,favorites,profile,priceBasis])`→`renderMarkers`로 그림 → 마커에 영향 주는 새 입력은 **이 deps에 꼭 추가**(아니면 미갱신). 모바일은 `isMobile`(matchMedia 640px)+인라인스타일 스프레드(미디어쿼리 아님). 핀 색은 `<style>`의 `.trade-pin--fav/ok/no`(자금설정 시 ok=초록/no=빨강 우선, 즐겨찾기는 ★)
 - 코드 위치: `app/lib/`에 로직 집중 — `trades.js`(수집·지오코딩·캐시 공용), `regions.js`(서울25+경기 + 지오코딩 지역검증), `loanPolicy.js`(LTV/DSR), `kapt.js`(공동주택 세대수 등). ⚠️ 실거래 코드는 **법정동 시군구 5자리** — **부천(41190)·화성(41590) 상위코드는 0건**이라 구별 코드로 등록(부천 4119x 3구 / 화성 2025신설 4159x 4구). API: `/api/trades`(N개월 병합), `/api/trend`(월별 추세, `area`로 평형별), `/api/favorites`(CRUD), `/api/cron/refresh`(즐겨찾기 지역 최근2개월 강제 재수집), `/api/complex-info`(세대수/동수)
 - 단지 세대수: 실거래가 API엔 없음 → 국토부 공동주택 API 별도(`kapt.js`). **현행 엔드포인트(2026-06 검증)**: 목록 `AptListService3/getSigunguAptList3`(시군구→kaptCode), 기본정보 `AptBasisInfoServiceV4/getAphusBassInfoV4`(kaptCode→`kaptdaCnt`세대수). ⚠️ **둘 다 data.go.kr 활용신청 필요**(자동승인) — **2026-06-25 승인 확인(HTTP 200)**. 미승인 시 HTTP 403 Forbidden(구버전 V2/V3는 500 "Unexpected errors"=폐기). ⚠️ **이 계열은 응답이 JSON**(실거래가 API의 XML과 정반대 — `_type=xml`줘도 JSON). `response.body.items[]`(목록)/`response.body.item`(기본정보, `kaptdaCnt`는 float). 미승인/오류 시 `{kaptCode:null}`로 graceful(세대수만 생략). 인메모리 캐시(서버수명). 뉴스는 네이버 뉴스 검색 링크(키 불필요)
 - 자동 갱신: `vercel.json` cron이 `/api/cron/refresh`를 매일 호출(배포 후 동작, Hobby는 1일1회). 보호용 `CRON_SECRET` env — 설정 시 `Authorization: Bearer <secret>` 필요(Vercel Cron이 자동 첨부). **배포 시 반드시 설정**(미설정이면 누구나 국토부 호출 트리거 가능). 로컬은 미설정이라 curl로 바로 호출 가능. `/api/trades` 응답에 `fetchedAt`(캐시 신선도) 포함
 - 스택 버전: Next.js 16 + React 19 (수동 스캐폴딩, `create-next-app` 미사용 — 기존 .md 파일 충돌 회피)
 - 변경 검증: `npx next build` (컴파일/타입). `next lint --file` 옵션은 없음.
 - API 동작 확인: `npm run dev`(백그라운드) → 로그 "Ready" 대기 → `curl "http://localhost:3000/api/trades?lawdCd=11680&dealYmd=202605"`
+- lib·외부 API 단독 검증(dev서버 불필요): 임시 `scripts/*.mjs`에서 `.env.local` 수동 파싱(`process.env` 주입)→ `await import("../app/lib/..")`→ `fetch`. 지오코딩률 측정·data.go.kr 응답 확인에 유용. `app/lib` import 시 `MODULE_TYPELESS_PACKAGE_JSON` 경고는 무해(grep로 필터). 끝나면 스크립트 삭제(커밋 금지)
 - ⚠️ Git Bash에서 `curl -o /tmp/x` 한 파일을 node가 못 읽음(win 경로 불일치) → 응답은 **stdin 파이프**나 cwd 상대경로로 받을 것
 - ⚠️ dev 서버 좀비: 새 `npm run dev`가 "Another next dev server is already running"으로 죽으면 stale 프로세스가 락 점유 → PowerShell `Get-CimInstance Win32_Process -Filter "Name='node.exe'" | ?{$_.CommandLine -match 'next'} | %{Stop-Process $_.ProcessId -Force}` 로 정리 (bash `pkill -f next`는 불안정)
 - ⚠️ 한글 인자 API 테스트는 bash `curl`로 금지(명령줄 UTF-8 깨져 DB에 깨진 값 저장) → `node -e`의 `fetch`+`encodeURIComponent` 사용
