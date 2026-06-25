@@ -255,6 +255,16 @@ export default function KakaoMap() {
   const [showProfile, setShowProfile] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
   const [priceBasis, setPriceBasis] = useState("recent"); // recent | avg
+  const [isMobile, setIsMobile] = useState(false); // 좁은 화면 → 패널을 시트/상단바로
+
+  // 화면 폭 추적(모바일 레이아웃 전환). 폰에서 세부패널이 지도를 가리지 않도록.
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 640px)");
+    const update = () => setIsMobile(mq.matches);
+    update();
+    mq.addEventListener("change", update);
+    return () => mq.removeEventListener("change", update);
+  }, []);
 
   const regionLabel = useMemo(() => regionName(lawdCd), [lawdCd]);
   const favSet = useMemo(
@@ -587,12 +597,26 @@ export default function KakaoMap() {
     setLawdCd(f.lawd_cd);
   }
 
+  // 모바일: 컨트롤은 상단 전체폭 바, 세부패널은 하단 시트(지도 상단부가 보이도록).
+  const controlPanelStyle = isMobile
+    ? { ...controlPanel, left: 8, right: 8, top: 8, width: "auto", padding: 11, gap: 8 }
+    : controlPanel;
+  const detailPanelStyle = isMobile
+    ? {
+        ...detailPanel,
+        top: "auto", left: 0, right: 0, bottom: 0, width: "auto",
+        maxHeight: "60vh", borderRadius: "16px 16px 0 0",
+        padding: "16px 16px calc(18px + env(safe-area-inset-bottom))",
+        boxShadow: "0 -6px 24px rgba(15,23,42,0.18)",
+      }
+    : detailPanel;
+
   return (
     <div style={{ position: "relative", width: "100%", height: "100vh" }}>
       <div ref={containerRef} style={{ width: "100%", height: "100%" }} />
 
-      {/* 좌측 상단 컨트롤 */}
-      <div style={controlPanel}>
+      {/* 좌측 상단 컨트롤 (모바일: 상단 전체폭 바) */}
+      <div style={controlPanelStyle}>
         <div style={panelTitle}>🏠 실거래 · 대출 비교</div>
 
         <select
@@ -652,7 +676,9 @@ export default function KakaoMap() {
             🔄 갱신
           </button>
         </div>
-        <div style={hintLine}>지도 이동 → 지역 전환 · 빈 곳 클릭 → 가까운 단지</div>
+        {!isMobile && (
+          <div style={hintLine}>지도 이동 → 지역 전환 · 빈 곳 클릭 → 가까운 단지</div>
+        )}
 
         {showProfile && (
           <div style={drawer}>
@@ -711,9 +737,9 @@ export default function KakaoMap() {
         )}
       </div>
 
-      {/* 우측 세부정보 패널 */}
+      {/* 우측 세부정보 패널 (모바일: 하단 시트) */}
       {selected && detail && (
-        <div style={detailPanel}>
+        <div style={detailPanelStyle}>
           <button onClick={() => setSelected(null)} style={closeBtn} aria-label="닫기">×</button>
           <div style={{ display: "flex", alignItems: "flex-start", gap: 8, paddingRight: 24 }}>
             <div style={{ flex: 1 }}>
