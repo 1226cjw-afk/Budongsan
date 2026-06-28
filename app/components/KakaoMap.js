@@ -144,11 +144,13 @@ function TrendChart({ series, areaLabel }) {
   const max = Math.max(...vals);
   const span = max - min || 1;
   const n = series.length;
+  const dense = n > 16; // 3년(36개월) 등 점이 많으면 마커 숨기고 축 라벨에 중간점 추가
   const x = (i) => AX + (i * plotW) / (n - 1);
   const y = (v) => PADTOP + (1 - (v - min) / span) * plotH;
   const line = pts.map((p) => `${x(series.indexOf(p))},${y(p.avg)}`).join(" ");
   const first = pts[0];
   const last = pts[pts.length - 1];
+  const mid = pts[Math.floor(pts.length / 2)];
   const up = last.avg >= first.avg;
   const stroke = up ? C.red : C.blue;
   const TICKS = 4;
@@ -165,7 +167,7 @@ function TrendChart({ series, areaLabel }) {
           </g>
         ))}
         <polyline points={line} fill="none" stroke={stroke} strokeWidth="2" />
-        {pts.map((p) => (
+        {!dense && pts.map((p) => (
           <circle key={p.ymd} cx={x(series.indexOf(p))} cy={y(p.avg)} r="2.5" fill={stroke} />
         ))}
       </svg>
@@ -176,6 +178,7 @@ function TrendChart({ series, areaLabel }) {
         }}
       >
         <span>{first.ymd.slice(2, 4)}.{first.ymd.slice(4)}</span>
+        {dense && <span>{mid.ymd.slice(2, 4)}.{mid.ymd.slice(4)}</span>}
         <span>{last.ymd.slice(2, 4)}.{last.ymd.slice(4)}</span>
       </div>
     </div>
@@ -237,6 +240,7 @@ export default function KakaoMap() {
   const lawdCdRef = useRef(DEFAULT_CODE); // idle 핸들러가 최신 지역 코드 참조
   const fitRef = useRef(true); // 다음 렌더에서 지도 영역 자동 맞춤 여부
   const favSetRef = useRef(new Set());
+  const favoritesRef = useRef([]); // 타지역 즐겨찾기 마커용 — 좌표 포함 전체 목록
 
   const [ready, setReady] = useState(false);
   const [status, setStatus] = useState("지도 로딩 중…");
@@ -248,6 +252,7 @@ export default function KakaoMap() {
   const [selected, setSelected] = useState(null);
   const [trend, setTrend] = useState({ loading: false, series: null });
   const [trendArea, setTrendArea] = useState(null); // null=전체, 정수 m2=특정 평형
+  const [trendMonths, setTrendMonths] = useState(12); // 추세 기간: 12(1년) | 36(3년)
   const [info, setInfo] = useState({ loading: false, data: null }); // 세대수 등 부가정보
   const [favorites, setFavorites] = useState([]);
   const [showFavs, setShowFavs] = useState(false);
@@ -273,7 +278,8 @@ export default function KakaoMap() {
   );
   useEffect(() => {
     favSetRef.current = favSet;
-  }, [favSet]);
+    favoritesRef.current = favorites;
+  }, [favSet, favorites]);
   useEffect(() => {
     lawdCdRef.current = lawdCd;
   }, [lawdCd]);
@@ -427,9 +433,12 @@ export default function KakaoMap() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [area, price, favorites, profile, priceBasis]);
 
-  // 단지 바뀌면 추세 평형 선택 초기화.
+  // 단지 바뀌면 추세를 '가장 거래 많은 평형'으로 초기화. 추세는 평형별만 본다
+  // (전체는 평형이 섞여 시세가 들쭉날쭉 → 추세 의미가 흐려짐).
   useEffect(() => {
-    setTrendArea(null);
+    const groups = detail?.groups;
+    setTrendArea(groups?.length ? groups.reduce((a, b) => (b.count > a.count ? b : a)).m2 : null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selected]);
 
   // 단지 선택(또는 평형 선택 변경) 시 월별 추세 로드. trendArea != null이면 그 평형만.
@@ -442,7 +451,7 @@ export default function KakaoMap() {
     setTrend({ loading: true, series: null });
     const areaParam = trendArea != null ? `&area=${trendArea}` : "";
     fetch(
-      `/api/trend?lawdCd=${lawdCd}&umdNm=${encodeURIComponent(selected.umdNm)}&aptNm=${encodeURIComponent(selected.aptNm)}&months=12${areaParam}`
+      `/api/trend?lawdCd=${lawdCd}&umdNm=${encodeURIComponent(selected.umdNm)}&aptNm=${encodeURIComponent(selected.aptNm)}&months=${trendMonths}${areaParam}`
     )
       .then((r) => r.json())
       .then((d) => {
@@ -453,7 +462,7 @@ export default function KakaoMap() {
       alive = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selected, trendArea]);
+  }, [selected, trendArea, trendMonths]);
 
   // 단지 선택 시 세대수 등 부가정보 로드(국토부 공동주택 API).
   useEffect(() => {
@@ -590,6 +599,21 @@ export default function KakaoMap() {
         overlaysRef.current.push(overlay);
         el.addEventListener("click", () => setSelected(c));
       });
+
+    // 타지역 즐겨찾기: 현재 지역 밖의 즐겨찾기도 ★ 핀으로 함께 표시한다.
+    // 그 지역 거래는 안 불러왔으므로 가격이 없음 → 지역명만 보여주고, 클릭하면 그 지역으로 이동.
+    // (현재 지역 즐겨찾기는 위 단지 루프에서 이미 금색 가격 핀으로 그림 → 중복 제외.)
+    favoritesRef.current.forEach((f) => {
+      if (f.lat == null || f.lawd_cd === data.lawdCd) return;
+      const pos = new kakao.maps.LatLng(f.lat, f.lng);
+      const el = document.createElement("div");
+      el.className = "trade-pin trade-pin--fav trade-pin--away";
+      el.innerHTML = `<b>★ ${regionName(f.lawd_cd)}</b><span>${f.apt_nm}</span>`;
+      const overlay = new kakao.maps.CustomOverlay({ position: pos, content: el, yAnchor: 1.2 });
+      overlay.setMap(map);
+      overlaysRef.current.push(overlay);
+      el.addEventListener("click", () => gotoFavorite(f));
+    });
 
     if (fitRef.current && shownComplexes) {
       map.setBounds(bounds);
@@ -775,66 +799,36 @@ export default function KakaoMap() {
           <div style={{ display: "flex", alignItems: "flex-start", gap: 8, paddingRight: 24 }}>
             <div style={{ flex: 1 }}>
               <div style={{ fontSize: 17, fontWeight: 700, color: C.text, lineHeight: 1.25 }}>{selected.aptNm}</div>
-              <div style={{ fontSize: 12, color: C.sub, marginTop: 3 }}>
+              {detail.overall && (
+                <div style={{ display: "flex", alignItems: "baseline", gap: 7, marginTop: 5, flexWrap: "wrap" }}>
+                  <span style={{ fontSize: 22, fontWeight: 800, color: C.text, letterSpacing: -0.3 }}>
+                    {formatManwon(detail.overall.recentAmount)}
+                  </span>
+                  <span style={{ fontSize: 11, color: C.muted }}>
+                    최근 실거래({shortDate(detail.overall.recentDate)}) · 평균 {formatManwon(detail.overall.avg)}
+                  </span>
+                </div>
+              )}
+              <div style={{ fontSize: 12, color: C.sub, marginTop: 5 }}>
                 {regionLabel} {selected.umdNm}
                 {detail.buildYear ? ` · ${detail.buildYear}년 준공` : ""}
                 {info.data?.households ? ` · ${info.data.households.toLocaleString()}세대` : ""}
                 {info.data?.dongCnt ? ` · ${info.data.dongCnt}개동` : ""}
+                {detail.overall ? ` · 최근 ${MONTHS}개월 ${detail.overall.count}건` : ""}
               </div>
               <a
-                href={`https://search.naver.com/search.naver?where=news&query=${encodeURIComponent(`${regionLabel} ${selected.aptNm}`)}`}
+                href={`https://search.naver.com/search.naver?query=${encodeURIComponent(`${regionLabel} ${selected.aptNm}`)}`}
                 target="_blank"
                 rel="noopener noreferrer"
                 style={newsLink}
               >
-                📰 관련 뉴스 검색
+                🔎 네이버 검색
               </a>
             </div>
             <button onClick={toggleFavorite} style={starBtn} title="즐겨찾기">
               {isSelectedFav ? "★" : "☆"}
             </button>
           </div>
-
-          {detail.overall && (
-            <div style={summaryCard}>
-              <div style={summaryItem}>
-                <span style={summaryLabel}>최근 {MONTHS}개월</span>
-                <span style={summaryVal}>{detail.overall.count}건</span>
-              </div>
-              <div style={summaryDiv} />
-              <div style={summaryItem}>
-                <span style={summaryLabel}>평균 시세</span>
-                <span style={summaryVal}>{formatManwon(detail.overall.avg)}</span>
-              </div>
-              <div style={summaryDiv} />
-              <div style={summaryItem}>
-                <span style={summaryLabel}>최근 거래</span>
-                <span style={{ ...summaryVal, color: C.blue }}>{formatManwon(detail.overall.recentAmount)}</span>
-                <span style={{ fontSize: 10, color: C.muted }}>{shortDate(detail.overall.recentDate)}</span>
-              </div>
-            </div>
-          )}
-
-          <div style={sectionLabel}>시세 추세 <span style={{ color: C.muted, fontWeight: 400 }}>· 최근 12개월</span></div>
-          <div style={chipRow}>
-            <button onClick={() => setTrendArea(null)} style={{ ...chip, ...(trendArea == null ? chipOn : null) }}>
-              전체
-            </button>
-            {detail.groups.map((g) => (
-              <button
-                key={g.m2}
-                onClick={() => setTrendArea(g.m2)}
-                style={{ ...chip, ...(trendArea === g.m2 ? chipOn : null) }}
-              >
-                {g.pyeong}평
-              </button>
-            ))}
-          </div>
-          {trend.loading ? (
-            <div style={hintText}>불러오는 중…</div>
-          ) : trend.series ? (
-            <TrendChart series={trend.series} areaLabel={trendArea != null ? `${trendArea}㎡` : null} />
-          ) : null}
 
           {/* 평형별 시세 · 대출 */}
           <div style={{ ...sectionLabel, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
@@ -861,23 +855,60 @@ export default function KakaoMap() {
             </div>
           )}
 
+          <div style={hintLine}>평형을 누르면 시세 추세 그래프가 펼쳐져요</div>
           <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 8 }}>
             {detail.groups.map((g) => {
               const gp = priceBasis === "recent" ? g.recentAmount : g.avg;
               const ln = loanForPrice(gp);
               const gap = ln ? assets - ln.requiredCash : null;
+              const isSel = trendArea === g.m2;
               return (
-                <div key={g.m2} style={pyeongCard}>
+                <div
+                  key={g.m2}
+                  onClick={() => setTrendArea(g.m2)}
+                  style={{ ...pyeongCard, ...(isSel ? pyeongCardOn : null), cursor: "pointer" }}
+                >
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
                     <span style={{ fontWeight: 700, fontSize: 13, color: C.text }}>
                       {g.m2}㎡ <span style={{ color: C.sub, fontWeight: 500 }}>· {g.pyeong}평</span>
                     </span>
-                    <span style={{ fontSize: 11, color: C.muted }}>{g.count}건</span>
+                    <a
+                      href={`https://m.land.naver.com/search/result/${encodeURIComponent(`${selected.umdNm} ${selected.aptNm}`)}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={naverLandLink}
+                      title="네이버 부동산에서 이 단지 매물 보기"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      {g.count}건 · 🏠 매물
+                    </a>
                   </div>
                   <div style={{ fontSize: 12, color: C.sub, marginTop: 3 }}>
                     평균 <b style={{ color: C.text }}>{formatManwon(g.avg)}</b>
                     {" · "}최근 <b style={{ color: C.blue }}>{formatManwon(g.recentAmount)}</b>
                   </div>
+
+                  {isSel && (
+                    <div style={{ marginTop: 8, paddingTop: 8, borderTop: `1px dashed ${C.border}` }} onClick={(e) => e.stopPropagation()}>
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                        <span style={{ fontSize: 11, fontWeight: 700, color: C.sub }}>
+                          시세 추세 <span style={{ color: C.muted, fontWeight: 400 }}>· {trendMonths === 36 ? "최근 3년" : "최근 1년"}</span>
+                        </span>
+                        <span style={{ display: "flex", gap: 4 }}>
+                          {[{ v: 12, label: "1년" }, { v: 36, label: "3년" }].map((o) => (
+                            <button key={o.v} onClick={() => setTrendMonths(o.v)} style={{ ...basisBtn, ...(trendMonths === o.v ? basisBtnOn : null) }}>
+                              {o.label}
+                            </button>
+                          ))}
+                        </span>
+                      </div>
+                      {trend.loading ? (
+                        <div style={hintText}>불러오는 중…</div>
+                      ) : trend.series ? (
+                        <TrendChart series={trend.series} areaLabel={`${g.m2}㎡`} />
+                      ) : null}
+                    </div>
+                  )}
 
                   {ln && (
                     ln.maxLoan <= 0 ? (
@@ -924,6 +955,7 @@ export default function KakaoMap() {
         }
         .trade-pin--fav { background: #f59e0b; }
         .trade-pin--fav:hover { background: #d97706; }
+        .trade-pin--away { opacity: 0.9; box-shadow: 0 2px 6px rgba(15,23,42,0.25), 0 0 0 1.5px rgba(255,255,255,0.85); }
         .trade-pin--ok { background: #059669; }
         .trade-pin--ok:hover { background: #047857; }
         .trade-pin--no { background: #dc2626; }
@@ -999,29 +1031,15 @@ const starBtn = {
   cursor: "pointer", color: C.amber, padding: 0,
 };
 
-const summaryCard = {
-  marginTop: 14, padding: "12px 8px", background: C.divider,
-  borderRadius: 10, display: "flex", alignItems: "stretch",
-};
-const summaryItem = {
-  flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 2, textAlign: "center",
-};
-const summaryDiv = { width: 1, background: C.border, margin: "2px 0" };
-const summaryLabel = { fontSize: 10, color: C.muted };
-const summaryVal = { fontSize: 14, fontWeight: 700, color: C.text };
-
 const sectionLabel = { marginTop: 18, fontSize: 12, fontWeight: 700, color: C.text };
 const newsLink = {
   display: "inline-block", marginTop: 7, fontSize: 12, fontWeight: 600,
   color: C.blue, textDecoration: "none",
 };
-const chipRow = { display: "flex", flexWrap: "wrap", gap: 4, marginTop: 8 };
-const chip = {
-  padding: "3px 9px", borderRadius: 12,
-  borderWidth: 1, borderStyle: "solid", borderColor: C.border,
-  background: "#fff", color: C.sub, fontSize: 11, fontWeight: 600, cursor: "pointer",
+const naverLandLink = {
+  fontSize: 11, fontWeight: 600, color: C.blue, textDecoration: "none",
+  whiteSpace: "nowrap", cursor: "pointer",
 };
-const chipOn = { background: C.blue, color: "#fff", borderColor: C.blue };
 
 const noticeBox = {
   marginTop: 8, padding: "10px 12px", background: C.blueSoft,
@@ -1029,6 +1047,9 @@ const noticeBox = {
 };
 const pyeongCard = {
   padding: "10px 12px", border: `1px solid ${C.border}`, borderRadius: 10, background: "#fff",
+};
+const pyeongCardOn = {
+  borderColor: C.blue, background: C.blueSoft, boxShadow: `0 0 0 1px ${C.blue}`,
 };
 const loanRow = { marginTop: 8, paddingTop: 8, borderTop: `1px dashed ${C.border}` };
 
