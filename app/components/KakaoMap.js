@@ -873,7 +873,7 @@ export default function KakaoMap() {
                       {g.m2}㎡ <span style={{ color: C.sub, fontWeight: 500 }}>· {g.pyeong}평</span>
                     </span>
                     <a
-                      href={`https://m.land.naver.com/search/result/${encodeURIComponent(`${selected.umdNm} ${selected.aptNm}`)}`}
+                      href={naverLandUrl(selected.umdNm, selected.aptNm)}
                       target="_blank"
                       rel="noopener noreferrer"
                       style={naverLandLink}
@@ -1040,6 +1040,16 @@ const naverLandLink = {
   fontSize: 11, fontWeight: 600, color: C.blue, textDecoration: "none",
   whiteSpace: "nowrap", cursor: "pointer",
 };
+
+// 네이버 부동산(m.land) 단지 검색 딥링크. ⚠️ 국토부 단지명엔 "동편마을(3단지)"처럼 괄호가 흔한데,
+// 네이버는 검색어에 괄호가 들어가면 단지 매칭에 실패("검색결과가 없습니다")한다. 괄호를 공백으로
+// 풀면 "동편마을 3단지"가 되어 해당 단지 페이지로 정확히 리다이렉트됨(2026-06-30 실측: 동편마을(3단지),
+// 한가람(두산/한양/세경/신라/삼성) 등 복구). 괄호 안이 동·필지번호(삼성(931))면 정확매칭은 안 되나
+// 최소한 검색결과는 나온다(괄호 든 리터럴은 0건). best-effort — 네이버는 단지 고정 URL 비공개.
+function naverLandUrl(umdNm, aptNm) {
+  const q = `${umdNm} ${aptNm}`.replace(/[()]/g, " ").replace(/\s+/g, " ").trim();
+  return `https://m.land.naver.com/search/result/${encodeURIComponent(q)}`;
+}
 
 const noticeBox = {
   marginTop: 8, padding: "10px 12px", background: C.blueSoft,
