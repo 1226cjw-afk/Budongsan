@@ -40,7 +40,7 @@ const DEFAULT_PROFILE = {
   householdType: "무주택", // 무주택 | 1주택 | 다주택
   isFirstTime: false,      // 생애최초 구입
   rate: "4",         // 실제 대출금리(%)
-  termYears: "30",   // 만기(년)
+  termYears: "40",   // 만기(년) — 주담대 최장 기본(은행/네이버 기본값)
 };
 
 // 색 팔레트 (인라인 스타일 공통).
@@ -310,7 +310,7 @@ export default function KakaoMap() {
       annualIncome: incomeNum,
       existingAnnualDebt: Number(profile.existingDebt) || 0,
       rate: (Number(profile.rate) || 0) / 100,
-      termYears: Number(profile.termYears) || 30,
+      termYears: Number(profile.termYears) || 40,
     });
   }
 

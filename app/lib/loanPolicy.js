@@ -88,7 +88,7 @@ export function calcMaxLoan({
   annualIncome,
   existingAnnualDebt = 0,
   rate = 0.04,
-  termYears = 30,
+  termYears = 40,
 }) {
   const regulated = isRegulated(lawdCd);
 
