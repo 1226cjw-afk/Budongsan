@@ -31,6 +31,19 @@ const PRICE_FILTERS = [
 
 const PYEONG = 3.3058;
 
+// 리스트 패널: 배지·정렬 기준.
+const HOT_PCT = 15; // 1년 상승률 이 값 이상이면 🔥 급등 배지(핀에도 표시)
+const REBUILD_AGE = 30; // 준공 후 이 연수 이상이면 🏗 재건축 연한 배지 (실제 추진현황 API는 없음 → 연한 기준)
+const LIST_INFO_TOP = 30; // 세대수 lazy 조회 대상: 정렬 상위 N개 행
+const SORT_OPTIONS = [
+  { v: "yoy", label: "🔥 1년 상승률순" },
+  { v: "count", label: "거래 많은순" },
+  { v: "priceAsc", label: "가격 낮은순" },
+  { v: "priceDesc", label: "가격 높은순" },
+  { v: "old", label: "🏗 준공 오래된순" },
+];
+const SORT_GAP = { v: "gap", label: "✓ 자금 여유순" }; // 내 자금 설정 시에만 노출
+
 // 대출 계산용 내 자금 프로필. 단위: 만원(보유자산/연소득/기존상환액), % (금리), 년(만기).
 const PROFILE_KEY = "re_loan_profile";
 const DEFAULT_PROFILE = {
@@ -262,6 +275,15 @@ export default function KakaoMap() {
   const [priceBasis, setPriceBasis] = useState("recent"); // recent | avg
   const [isMobile, setIsMobile] = useState(false); // 좁은 화면 → 패널을 시트/상단바로
 
+  // 단지 리스트 패널 (네이버식) — tradesData는 dataRef와 같은 내용의 반응형 사본(리스트 파생용).
+  const [tradesData, setTradesData] = useState(null);
+  const [rank, setRank] = useState(new Map()); // `${umd}|${apt}` → {yoyPct, recentN, pastN}
+  const [sortBy, setSortBy] = useState("yoy");
+  const [onlyBuyable, setOnlyBuyable] = useState(false); // 구매가능 단지만 (자금 설정 시)
+  const [showList, setShowList] = useState(false); // 모바일 목록 시트 (데스크톱은 항상 표시)
+  const [householdMap, setHouseholdMap] = useState(new Map()); // favKey → 세대수|null (lazy)
+  const infoInflightRef = useRef(new Set()); // 세대수 조회 중복 방지
+
   // 화면 폭 추적(모바일 레이아웃 전환). 폰에서 세부패널이 지도를 가리지 않도록.
   useEffect(() => {
     const mq = window.matchMedia("(max-width: 640px)");
@@ -427,11 +449,31 @@ export default function KakaoMap() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, lawdCd]);
 
+  // 지역 전체 1년 상승률(/api/rank) — 리스트 정렬·🔥 배지용. 지도와 병렬로 비동기 로드.
+  useEffect(() => {
+    if (!ready) return;
+    let alive = true;
+    setRank(new Map());
+    fetch(`/api/rank?lawdCd=${lawdCd}`)
+      .then((r) => r.json())
+      .then((d) => {
+        if (!alive || !d.items) return;
+        setRank(new Map(d.items.map((i) => [`${i.umdNm}|${i.aptNm}`, i])));
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [ready, lawdCd]);
+
   useEffect(() => {
     if (!ready || !dataRef.current) return;
+    // 지역 전환 중(새 데이터 로딩 전) stale 렌더 방지 — 옛 지역으로 setBounds가 실행되면
+    // fitRef가 소진돼 새 지역으로 지도가 안 움직이고, idle 핸들러가 지역을 되돌린다.
+    if (dataRef.current.lawdCd !== lawdCd) return;
     renderMarkers();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [area, price, favorites, profile, priceBasis]);
+  }, [area, price, favorites, profile, priceBasis, rank]);
 
   // 단지 바뀌면 추세를 '가장 거래 많은 평형'으로 초기화. 추세는 평형별만 본다
   // (전체는 평형이 섞여 시세가 들쭉날쭉 → 추세 의미가 흐려짐).
@@ -535,6 +577,7 @@ export default function KakaoMap() {
         return;
       }
       dataRef.current = data;
+      setTradesData(data); // 리스트 패널 파생용 반응형 사본
       setLastUpdated(data.fetchedAt ?? null);
       renderMarkers();
     } catch (e) {
@@ -586,13 +629,15 @@ export default function KakaoMap() {
         if (buyable) buyableCount += 1;
 
         const isFav = favs.has(favKey(data.lawdCd, c.umdNm, c.aptNm));
+        const yoy = rank.get(`${c.umdNm}|${c.aptNm}`)?.yoyPct;
+        const hot = yoy != null && yoy >= HOT_PCT; // 1년 급등 단지는 핀에도 🔥
         const el = document.createElement("div");
         let cls = "trade-pin";
         if (buyable === true) cls += " trade-pin--ok";
         else if (buyable === false) cls += " trade-pin--no";
         else if (isFav) cls += " trade-pin--fav"; // 색칠모드 아닐 때만 금색
         el.className = cls;
-        el.innerHTML = `<b>${isFav ? "★ " : ""}평균 ${formatManwon(stat.avg)}</b><span>${c.aptNm}</span>`;
+        el.innerHTML = `<b>${isFav ? "★ " : ""}${hot ? "🔥 " : ""}평균 ${formatManwon(stat.avg)}</b><span>${c.aptNm}</span>`;
 
         const overlay = new kakao.maps.CustomOverlay({ position: pos, content: el, yAnchor: 1.2 });
         overlay.setMap(map);
@@ -631,6 +676,107 @@ export default function KakaoMap() {
     );
   }
 
+  // 리스트 행 데이터 파생: 필터 적용 → 배지(상승률/재건축연한/자금여유) 계산 → 정렬.
+  // affordMode에서 gap = 평형 중 가장 여유가 큰 값(대출가능 평형 기준), null = 전 평형 대출 불가.
+  const affordMode = hasProfile && assets > 0;
+  const listRows = useMemo(() => {
+    if (!tradesData) return null;
+    const aB = AREA_FILTERS.find((a) => a.value === area) ?? AREA_FILTERS[0];
+    const pB = PRICE_FILTERS.find((p) => p.value === price) ?? PRICE_FILTERS[0];
+    const thisYear = new Date().getFullYear();
+    const rows = [];
+    for (const c of tradesData.complexes) {
+      const hits = (c.trades || []).filter(
+        (t) => t.dealAmount >= pB.min && t.dealAmount < pB.max && t.area >= aB.min && t.area < aB.max
+      );
+      const stat = summarize(hits);
+      if (!stat) continue;
+      let gap = null;
+      if (affordMode) {
+        for (const g of groupByPyeong(hits)) {
+          const gp = priceBasis === "recent" ? g.recentAmount : g.avg;
+          const ln = loanForPrice(gp);
+          if (ln && ln.maxLoan > 0) {
+            const d = assets - ln.requiredCash;
+            if (gap == null || d > gap) gap = d;
+          }
+        }
+      }
+      const key = favKey(tradesData.lawdCd, c.umdNm, c.aptNm);
+      const buildYear = Number(hits[0]?.buildYear) || null;
+      rows.push({
+        c,
+        key,
+        price: priceBasis === "recent" ? stat.recentAmount : stat.avg,
+        count: stat.count,
+        yoy: rank.get(`${c.umdNm}|${c.aptNm}`)?.yoyPct ?? null,
+        buildYear,
+        rebuild: buildYear != null && thisYear - buildYear >= REBUILD_AGE,
+        gap,
+        noLoan: affordMode && gap == null, // 다주택 규제 등으로 전 평형 대출 불가
+        buyable: gap != null && gap >= 0,
+        isFav: favSet.has(key),
+        households: householdMap.get(key) ?? null,
+      });
+    }
+    const filtered = affordMode && onlyBuyable ? rows.filter((r) => r.buyable) : rows;
+    const cmp = {
+      yoy: (a, b) => (b.yoy ?? -Infinity) - (a.yoy ?? -Infinity),
+      count: (a, b) => b.count - a.count,
+      priceAsc: (a, b) => a.price - b.price,
+      priceDesc: (a, b) => b.price - a.price,
+      old: (a, b) => (a.buildYear ?? 9999) - (b.buildYear ?? 9999),
+      gap: (a, b) => (b.gap ?? -Infinity) - (a.gap ?? -Infinity),
+    }[sortBy];
+    return cmp ? filtered.sort(cmp) : filtered;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tradesData, area, price, priceBasis, rank, profile, sortBy, onlyBuyable, favSet, householdMap]);
+
+  // 리스트 상위 N개 행의 세대수 lazy 조회(/api/complex-info, 서버 인메모리 캐시).
+  useEffect(() => {
+    if (!listRows) return;
+    const targets = listRows
+      .slice(0, LIST_INFO_TOP)
+      .filter((r) => !householdMap.has(r.key) && !infoInflightRef.current.has(r.key));
+    if (!targets.length) return;
+    targets.forEach((r) => infoInflightRef.current.add(r.key));
+    let alive = true;
+    (async () => {
+      for (let i = 0; i < targets.length; i += 4) {
+        const batch = targets.slice(i, i + 4);
+        const results = await Promise.all(
+          batch.map((r) =>
+            fetch(
+              `/api/complex-info?lawdCd=${lawdCd}&umdNm=${encodeURIComponent(r.c.umdNm)}&aptNm=${encodeURIComponent(r.c.aptNm)}`
+            )
+              .then((x) => x.json())
+              .catch(() => null)
+          )
+        );
+        if (!alive) return;
+        setHouseholdMap((prev) => {
+          const m = new Map(prev);
+          batch.forEach((r, j) => m.set(r.key, results[j]?.households ?? null));
+          return m;
+        });
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [listRows, lawdCd]);
+
+  // 리스트 행 클릭 → 단지 선택 + 지도 이동(자동맞춤 없이 그 위치로).
+  function selectComplex(c) {
+    setSelected(c);
+    if (isMobile) setShowList(false);
+    if (c.lat != null && mapRef.current) {
+      fitRef.current = false;
+      mapRef.current.panTo(new window.kakao.maps.LatLng(c.lat, c.lng));
+    }
+  }
+
   function selectRegion(code) {
     fitRef.current = true;
     setLawdCd(code);
@@ -645,10 +791,99 @@ export default function KakaoMap() {
     setLawdCd(f.lawd_cd);
   }
 
+  // 내 자금이 꺼지면 자금 기반 정렬·필터도 초기화.
+  useEffect(() => {
+    if (!affordMode) {
+      if (sortBy === "gap") setSortBy("yoy");
+      if (onlyBuyable) setOnlyBuyable(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [affordMode]);
+
+  const sortOptions = affordMode ? [...SORT_OPTIONS, SORT_GAP] : SORT_OPTIONS;
+
+  // 단지 리스트 (정렬 바 + 행 목록) — 데스크톱은 좌측 패널 하단, 모바일은 목록 시트에 공용.
+  const listContent = (
+    <>
+      <div style={sortBar}>
+        <select value={sortBy} onChange={(e) => setSortBy(e.target.value)} style={sortSelect}>
+          {sortOptions.map((o) => (
+            <option key={o.v} value={o.v}>{o.label}</option>
+          ))}
+        </select>
+        {affordMode && (
+          <label style={onlyBuyLabel}>
+            <input
+              type="checkbox"
+              checked={onlyBuyable}
+              onChange={(e) => setOnlyBuyable(e.target.checked)}
+              style={{ margin: 0 }}
+            />
+            구매가능만
+          </label>
+        )}
+        <span style={{ fontSize: 11, color: C.muted, marginLeft: "auto", whiteSpace: "nowrap" }}>
+          {listRows ? `${listRows.length}곳` : ""}
+        </span>
+      </div>
+      <div style={listScroll}>
+        {!listRows ? (
+          <div style={hintText}>불러오는 중…</div>
+        ) : listRows.length === 0 ? (
+          <div style={hintText}>조건에 맞는 단지가 없습니다</div>
+        ) : (
+          listRows.map((r, i) => {
+            const isOn = selected && selected.umdNm === r.c.umdNm && selected.aptNm === r.c.aptNm;
+            return (
+              <div
+                key={r.key}
+                className={`cx-row${isOn ? " cx-row--on" : ""}`}
+                onClick={() => selectComplex(r.c)}
+                style={{ animationDelay: `${Math.min(i, 15) * 20}ms` }}
+              >
+                <div style={rowTop}>
+                  <span style={rowName}>
+                    {r.isFav && <span style={{ color: C.amber }}>★ </span>}
+                    {r.c.aptNm}
+                  </span>
+                  <span style={rowPrice}>{formatManwon(r.price)}</span>
+                </div>
+                <div style={rowSub}>
+                  {r.c.umdNm}
+                  {r.buildYear ? ` · '${String(r.buildYear).slice(2)}년` : ""}
+                  {r.households ? ` · ${r.households.toLocaleString()}세대` : ""}
+                  {` · ${r.count}건`}
+                </div>
+                <div style={rowBadges}>
+                  {r.yoy != null && (
+                    <span style={r.yoy >= HOT_PCT ? hotBadge : r.yoy >= 0 ? upBadge : downBadge}>
+                      {r.yoy >= HOT_PCT ? "🔥 " : ""}1년 {r.yoy >= 0 ? "+" : ""}{r.yoy}%
+                    </span>
+                  )}
+                  {r.rebuild && <span style={rebuildBadge}>🏗 재건축연한</span>}
+                  {r.noLoan ? (
+                    <span style={gapNoBadge}>대출 불가</span>
+                  ) : r.gap != null ? (
+                    r.gap >= 0 ? (
+                      <span style={gapOkBadge}>✓ 여유 {formatManwon(r.gap)}</span>
+                    ) : (
+                      <span style={gapNoBadge}>부족 {formatManwon(-r.gap)}</span>
+                    )
+                  ) : null}
+                </div>
+              </div>
+            );
+          })
+        )}
+      </div>
+    </>
+  );
+
   // 모바일: 컨트롤은 상단 전체폭 바, 세부패널은 하단 시트(지도 상단부가 보이도록).
+  // 데스크톱: 좌측 패널이 컨트롤+단지 리스트(네이버식)로 전체 높이.
   const controlPanelStyle = isMobile
     ? { ...controlPanel, left: 8, right: 8, top: 8, width: "auto", padding: 11, gap: 8 }
-    : controlPanel;
+    : { ...controlPanel, bottom: 14, width: 340, overflow: "hidden" };
   const detailPanelStyle = isMobile
     ? {
         ...detailPanel,
@@ -708,6 +943,14 @@ export default function KakaoMap() {
           >
             💰 내 자금{hasProfile ? " ✓" : ""}
           </button>
+          {isMobile && (
+            <button
+              onClick={() => { setShowList(true); setShowFavs(false); setShowProfile(false); }}
+              style={pillBtn}
+            >
+              📋 목록
+            </button>
+          )}
         </div>
 
         <div style={statusText}>{status}</div>
@@ -790,7 +1033,20 @@ export default function KakaoMap() {
             )}
           </div>
         )}
+
+        {!isMobile && listContent}
       </div>
+
+      {/* 모바일 단지 목록 시트 */}
+      {isMobile && showList && (
+        <div style={mobileListSheet}>
+          <button onClick={() => setShowList(false)} style={closeBtn} aria-label="닫기">×</button>
+          <div style={{ fontSize: 13, fontWeight: 700, color: C.text, paddingRight: 24 }}>
+            📋 {regionLabel} 단지 목록
+          </div>
+          {listContent}
+        </div>
+      )}
 
       {/* 우측 세부정보 패널 (모바일: 하단 시트) */}
       {selected && detail && (
@@ -809,6 +1065,22 @@ export default function KakaoMap() {
                   </span>
                 </div>
               )}
+              {(() => {
+                const yoy = rank.get(`${selected.umdNm}|${selected.aptNm}`)?.yoyPct;
+                const rebuild =
+                  detail.buildYear && new Date().getFullYear() - Number(detail.buildYear) >= REBUILD_AGE;
+                if (yoy == null && !rebuild) return null;
+                return (
+                  <div style={{ display: "flex", gap: 5, marginTop: 6, flexWrap: "wrap" }}>
+                    {yoy != null && (
+                      <span style={yoy >= HOT_PCT ? hotBadge : yoy >= 0 ? upBadge : downBadge}>
+                        {yoy >= HOT_PCT ? "🔥 " : ""}1년 {yoy >= 0 ? "+" : ""}{yoy}%
+                      </span>
+                    )}
+                    {rebuild && <span style={rebuildBadge}>🏗 재건축연한</span>}
+                  </div>
+                );
+              })()}
               <div style={{ fontSize: 12, color: C.sub, marginTop: 5 }}>
                 {regionLabel} {selected.umdNm}
                 {detail.buildYear ? ` · ${detail.buildYear}년 준공` : ""}
@@ -964,6 +1236,14 @@ export default function KakaoMap() {
         .trade-pin span { font-size: 9px; opacity: 0.85; max-width: 92px;
           overflow: hidden; text-overflow: ellipsis; }
         .trade-pin:hover { background: #1d4ed8; }
+        .cx-row { padding: 9px 8px 9px 10px; border-bottom: 1px solid ${C.divider};
+          border-left: 3px solid transparent; cursor: pointer;
+          transition: background 0.12s, border-color 0.12s;
+          animation: cxIn 0.28s ease both; }
+        .cx-row:hover { background: #f8fafc; }
+        .cx-row--on { background: ${C.blueSoft}; border-left-color: ${C.blue}; }
+        @keyframes cxIn { from { opacity: 0; transform: translateY(4px); }
+          to { opacity: 1; transform: none; } }
       `}</style>
     </div>
   );
@@ -1020,6 +1300,49 @@ const favRow = {
   fontSize: 12, color: C.text, padding: "6px 2px", cursor: "pointer",
   borderBottom: `1px solid ${C.divider}`, whiteSpace: "nowrap",
   overflow: "hidden", textOverflow: "ellipsis",
+};
+
+// 단지 리스트 패널(네이버식) — 정렬 바 + 행 목록.
+const sortBar = {
+  display: "flex", alignItems: "center", gap: 8,
+  paddingTop: 9, borderTop: `1px solid ${C.divider}`,
+};
+const sortSelect = {
+  flex: "0 1 150px", padding: "5px 7px", borderRadius: 7,
+  border: `1px solid ${C.border}`, fontSize: 12, background: "#fff",
+  color: C.text, cursor: "pointer", fontWeight: 600,
+};
+const onlyBuyLabel = {
+  display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11,
+  color: C.sub, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap",
+};
+const listScroll = { flex: 1, minHeight: 0, overflowY: "auto", margin: "0 -6px", padding: "0 6px" };
+const rowTop = { display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 };
+const rowName = {
+  fontSize: 13, fontWeight: 700, color: C.text, whiteSpace: "nowrap",
+  overflow: "hidden", textOverflow: "ellipsis",
+};
+const rowPrice = {
+  fontSize: 13, fontWeight: 800, color: C.text, whiteSpace: "nowrap",
+  fontVariantNumeric: "tabular-nums",
+};
+const rowSub = { fontSize: 11, color: C.sub, marginTop: 2 };
+const rowBadges = { display: "flex", gap: 4, marginTop: 4, flexWrap: "wrap" };
+const badgeBase = {
+  fontSize: 10, fontWeight: 700, borderRadius: 5, padding: "2px 6px", whiteSpace: "nowrap",
+};
+const hotBadge = { ...badgeBase, color: "#b91c1c", background: "#fee2e2" };
+const upBadge = { ...badgeBase, color: "#b45309", background: "#fef9c3" };
+const downBadge = { ...badgeBase, color: "#1d4ed8", background: C.blueSoft };
+const rebuildBadge = { ...badgeBase, color: "#92400e", background: "#fef3c7" };
+const gapOkBadge = { ...badgeBase, color: "#047857", background: "#dcfce7" };
+const gapNoBadge = { ...badgeBase, color: "#be123c", background: "#ffe4e6" };
+const mobileListSheet = {
+  position: "absolute", left: 0, right: 0, bottom: 0, zIndex: 12,
+  maxHeight: "62vh", display: "flex", flexDirection: "column", gap: 8,
+  background: "#fff", borderRadius: "16px 16px 0 0",
+  padding: "14px 14px calc(16px + env(safe-area-inset-bottom))",
+  boxShadow: "0 -6px 24px rgba(15,23,42,0.18)",
 };
 
 const closeBtn = {
