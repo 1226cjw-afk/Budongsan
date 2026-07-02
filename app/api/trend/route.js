@@ -1,7 +1,7 @@
 // 한 단지의 월별 시세 추세 (기본 최근 12개월). 지오코딩 없이 원본 거래만 집계 → 빠름.
 // 파라미터: lawdCd, umdNm, aptNm, months(기본 12), area(전용㎡ 정수, 선택 — 특정 평형만).
 
-import { fetchRawMonth, monthsBack, currentYmd } from "../../lib/trades";
+import { fetchRawMonths, monthsBack, currentYmd } from "../../lib/trades";
 
 export async function GET(request) {
   const { searchParams } = new URL(request.url);
@@ -20,17 +20,17 @@ export async function GET(request) {
 
   const ymds = monthsBack(currentYmd(), months); // 이번 달 기준 과거 N개월
 
-  let perMonth;
+  let byYmd;
   try {
-    perMonth = await Promise.all(ymds.map((ymd) => fetchRawMonth(lawdCd, ymd)));
+    ({ byYmd } = await fetchRawMonths(lawdCd, ymds)); // 캐시 일괄 조회 + 미스만 제한 병렬 수집
   } catch (e) {
     return Response.json({ error: e.message }, { status: 502 });
   }
 
   // 각 달: 해당 단지(+선택 평형) 거래만 추려 평균/건수 집계.
   const series = ymds
-    .map((ymd, i) => {
-      let hits = perMonth[i].filter(
+    .map((ymd) => {
+      let hits = (byYmd.get(ymd) || []).filter(
         (t) => t.umdNm === umdNm && t.aptNm === aptNm
       );
       if (area != null) hits = hits.filter((t) => Math.round(t.area) === area);

@@ -1,7 +1,7 @@
 // 국토부 실거래가 → 카카오 지오코딩 → JSON. 여러 달(기본 3개월) 병합해 단지별로 반환.
 // 수집/지오코딩/캐시 로직은 ../../lib/trades 에 공용화.
 
-import { fetchRawMonth, geocodeMany, monthsBack, latestFetchedAt } from "../../lib/trades";
+import { fetchRawMonths, geocodeMany, monthsBack, latestFetchedAt } from "../../lib/trades";
 
 export async function GET(request) {
   const { searchParams } = new URL(request.url);
@@ -22,10 +22,8 @@ export async function GET(request) {
   // 1) 각 달 원본 거래 수집(캐시) 후 병합.
   let trades;
   try {
-    const perMonth = await Promise.all(
-      ymds.map((ymd) => fetchRawMonth(lawdCd, ymd, { refresh }))
-    );
-    trades = perMonth.flat();
+    const { byYmd } = await fetchRawMonths(lawdCd, ymds, { refresh });
+    trades = ymds.flatMap((ymd) => byYmd.get(ymd) || []);
   } catch (e) {
     return Response.json({ error: e.message }, { status: 502 });
   }

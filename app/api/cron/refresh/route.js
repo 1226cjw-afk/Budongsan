@@ -6,10 +6,14 @@
 //   - Vercel Cron 은 CRON_SECRET 환경변수가 있으면 이 헤더를 자동으로 붙여 호출한다.
 //   - 미설정(로컬 등)이면 인증 없이 동작.
 
-import { fetchRawMonth, monthsBack, currentYmd } from "../../../lib/trades";
+import { fetchRawMonth, fetchRawMonths, monthsBack, currentYmd } from "../../../lib/trades";
 import { supabaseAdmin } from "../../../lib/supabaseServer";
 
 const REFRESH_MONTHS = 2; // 이번달 + 지난달(지연 신고 반영). 과거달은 거의 안 변함.
+const TREND_WINDOW = 36; // 추세 3년 창 — 미캐시 달을 미리 채워 첫 3년 조회를 빠르게(과거달은 영구 캐시)
+const WARM_DEADLINE_MS = 40_000; // 워밍은 이 시간 넘으면 중단(함수 타임아웃 보호, 다음 실행이 이어감)
+
+export const maxDuration = 60; // Vercel 함수 최대 실행(초) — 첫 워밍(지역당 ~34달 수집) 대비
 
 export async function GET(request) {
   const secret = process.env.CRON_SECRET;
@@ -47,11 +51,28 @@ export async function GET(request) {
     results.push({ lawdCd, total, months });
   }
 
+  // 추세 3년 캐시 워밍: 최근 2달(위에서 갱신)을 뺀 나머지 창의 미캐시 달만 수집.
+  const warmYmds = monthsBack(currentYmd(), TREND_WINDOW).slice(REFRESH_MONTHS);
+  const trendWarm = [];
+  for (const lawdCd of regions) {
+    if (Date.now() - started > WARM_DEADLINE_MS) {
+      trendWarm.push({ lawdCd, skipped: "deadline" });
+      continue;
+    }
+    try {
+      const { fetchedYmds } = await fetchRawMonths(lawdCd, warmYmds);
+      trendWarm.push({ lawdCd, fetched: fetchedYmds.length });
+    } catch (e) {
+      trendWarm.push({ lawdCd, error: e.message });
+    }
+  }
+
   return Response.json({
     ok: true,
     refreshedAt: new Date().toISOString(),
     regionCount: regions.length,
     monthsRefreshed: ymds,
+    trendWarm,
     durationMs: Date.now() - started,
     results,
   });

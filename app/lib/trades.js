@@ -79,22 +79,8 @@ async function geocode(prefix, token, umdNm, aptNm, jibun, kakaoKey) {
   return null;
 }
 
-// 한 달 원본 거래(<12억) 반환. trade_raw_cache 사용(이번달 12h TTL).
-export async function fetchRawMonth(lawdCd, ymd, { refresh = false } = {}) {
-  if (supabaseAdmin && !refresh) {
-    const { data: row } = await supabaseAdmin
-      .from("trade_raw_cache")
-      .select("trades, fetched_at")
-      .eq("lawd_cd", lawdCd)
-      .eq("deal_ymd", ymd)
-      .maybeSingle();
-    if (row) {
-      const ageMs = Date.now() - new Date(row.fetched_at).getTime();
-      const stale = isCurrentMonth(ymd) && ageMs > CURRENT_MONTH_TTL_MS;
-      if (!stale) return row.trades;
-    }
-  }
-
+// 국토부에서 한 달 원본 거래를 직접 수집(캐시 미사용). 내부용.
+async function fetchMonthFromApi(lawdCd, ymd) {
   const dataKey = process.env.DATA_GO_KR_KEY;
   if (!dataKey) throw new Error("DATA_GO_KR_KEY 환경변수가 필요합니다.");
   const url =
@@ -110,16 +96,63 @@ export async function fetchRawMonth(lawdCd, ymd, { refresh = false } = {}) {
     const msg = (xml.match(/<resultMsg>([^<]*)<\/resultMsg>/) || [])[1] || "unknown";
     throw new Error(`국토부 API 오류 ${code}: ${msg}`);
   }
-  const trades = parseTrades(xml).filter((t) => t.dealAmount < MAX_AMOUNT);
+  return parseTrades(xml).filter((t) => t.dealAmount < MAX_AMOUNT);
+}
 
-  if (supabaseAdmin) {
-    const { error } = await supabaseAdmin.from("trade_raw_cache").upsert(
-      { lawd_cd: lawdCd, deal_ymd: ymd, trades, fetched_at: new Date().toISOString() },
-      { onConflict: "lawd_cd,deal_ymd" }
-    );
-    if (error) console.error("[trade_raw_cache] upsert:", error.message);
+// 미캐시 달 동시 국토부 호출 상한. 실측(2026-07, 36개월 콜드): 동시6=15.7s / 12=12.1s / 36=4.7s
+// — 국토부는 동시 호출 스로틀이 없어 전량 동시가 최속. months 상한이 36이라 사실상 무제한.
+const RTMS_CONCURRENCY = 36;
+
+// 여러 달 원본 거래를 한 번에 → 캐시 1회 일괄 조회, 미스만 제한 병렬 수집 + 배치 저장.
+// 반환: { byYmd: Map(ymd → trades[]), fetchedYmds: 국토부에서 새로 받은 달들 }
+export async function fetchRawMonths(lawdCd, ymds, { refresh = false } = {}) {
+  const byYmd = new Map();
+
+  if (supabaseAdmin && !refresh) {
+    const { data } = await supabaseAdmin
+      .from("trade_raw_cache")
+      .select("deal_ymd, trades, fetched_at")
+      .eq("lawd_cd", lawdCd)
+      .in("deal_ymd", ymds);
+    for (const row of data || []) {
+      const ageMs = Date.now() - new Date(row.fetched_at).getTime();
+      const stale = isCurrentMonth(row.deal_ymd) && ageMs > CURRENT_MONTH_TTL_MS;
+      if (!stale) byYmd.set(row.deal_ymd, row.trades);
+    }
   }
-  return trades;
+
+  const misses = ymds.filter((ymd) => !byYmd.has(ymd));
+  const fetchedYmds = [];
+  for (let i = 0; i < misses.length; i += RTMS_CONCURRENCY) {
+    const batch = misses.slice(i, i + RTMS_CONCURRENCY);
+    const perMonth = await Promise.all(
+      batch.map((ymd) => fetchMonthFromApi(lawdCd, ymd))
+    );
+    const now = new Date().toISOString();
+    batch.forEach((ymd, j) => {
+      byYmd.set(ymd, perMonth[j]);
+      fetchedYmds.push(ymd);
+    });
+    if (supabaseAdmin) {
+      const { error } = await supabaseAdmin.from("trade_raw_cache").upsert(
+        batch.map((ymd, j) => ({
+          lawd_cd: lawdCd,
+          deal_ymd: ymd,
+          trades: perMonth[j],
+          fetched_at: now,
+        })),
+        { onConflict: "lawd_cd,deal_ymd" }
+      );
+      if (error) console.error("[trade_raw_cache] batch upsert:", error.message);
+    }
+  }
+  return { byYmd, fetchedYmds };
+}
+
+// 한 달 원본 거래(<12억) 반환. trade_raw_cache 사용(이번달 12h TTL).
+export async function fetchRawMonth(lawdCd, ymd, opts) {
+  const { byYmd } = await fetchRawMonths(lawdCd, [ymd], opts);
+  return byYmd.get(ymd);
 }
 
 // 주어진 달들 중 캐시에 저장된 가장 최근 갱신 시각(ISO). 데이터 신선도 표시용.
