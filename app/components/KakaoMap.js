@@ -784,9 +784,15 @@ export default function KakaoMap() {
 
   function gotoFavorite(f) {
     setShowFavs(false);
-    fitRef.current = true;
+    // panTo(애니메이션)+fitRef(데이터 도착 후 setBounds)를 같이 걸면 경합 —
+    // 캐시가 빠르면 setBounds 위로 panTo가 마저 진행돼 단지들이 화면 가장자리로 밀린다.
+    // 좌표가 있으면 즉시 setCenter로 착지하고 자동맞춤은 끈다(레벨 5 = 초기 지도 배율).
     if (f.lat != null && mapRef.current) {
-      mapRef.current.panTo(new window.kakao.maps.LatLng(f.lat, f.lng));
+      fitRef.current = false;
+      mapRef.current.setLevel(5);
+      mapRef.current.setCenter(new window.kakao.maps.LatLng(f.lat, f.lng));
+    } else {
+      fitRef.current = true; // 좌표 없는 옛 즐겨찾기 → 지역 전체 맞춤 폴백
     }
     setLawdCd(f.lawd_cd);
   }
@@ -918,12 +924,12 @@ export default function KakaoMap() {
         </select>
 
         <div style={{ display: "flex", gap: 8 }}>
-          <select value={area} onChange={(e) => setArea(e.target.value)} disabled={loading} style={selectStyle}>
+          <select value={area} onChange={(e) => setArea(e.target.value)} disabled={loading} style={{ ...selectStyle, flex: 1 }}>
             {AREA_FILTERS.map((a) => (
               <option key={a.value} value={a.value}>{a.label}</option>
             ))}
           </select>
-          <select value={price} onChange={(e) => setPrice(e.target.value)} disabled={loading} style={selectStyle}>
+          <select value={price} onChange={(e) => setPrice(e.target.value)} disabled={loading} style={{ ...selectStyle, flex: 1 }}>
             {PRICE_FILTERS.map((p) => (
               <option key={p.value} value={p.value}>{p.label}</option>
             ))}
@@ -1263,8 +1269,10 @@ const detailPanel = {
   overflowY: "auto", background: "#fff", padding: "18px 20px",
   borderRadius: 16, boxShadow: PANEL_SHADOW, border: `1px solid ${C.border}`,
 };
+// ⚠️ flex:1 금지 — 세로 flex 패널의 직계 자식이면 세로로 늘어남(시군구 칸 304px 사고).
+// 가로 행에서 폭을 나눌 땐 사용처에서 flex:1을 덧씌울 것.
 const selectStyle = {
-  flex: 1, width: "100%", padding: "8px 10px", borderRadius: 8,
+  width: "100%", padding: "8px 10px", borderRadius: 8,
   border: `1px solid ${C.border}`, fontSize: 13, background: "#fff",
   color: C.text, cursor: "pointer",
 };
@@ -1379,7 +1387,9 @@ const noticeBox = {
   border: `1px solid #dbeafe`, borderRadius: 10, fontSize: 12, color: C.sub, lineHeight: 1.5,
 };
 const pyeongCard = {
-  padding: "10px 12px", border: `1px solid ${C.border}`, borderRadius: 10, background: "#fff",
+  // pyeongCardOn이 borderColor만 덮어쓰므로 shorthand border 금지(React 혼용 경고)
+  padding: "10px 12px", borderWidth: 1, borderStyle: "solid", borderColor: C.border,
+  borderRadius: 10, background: "#fff",
 };
 const pyeongCardOn = {
   borderColor: C.blue, background: C.blueSoft, boxShadow: `0 0 0 1px ${C.blue}`,
