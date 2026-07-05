@@ -4,9 +4,9 @@
 
 ## ▶ 다음 세션 시작점 (여기서 이어서)
 **MVP~3단계 + 신규기능 다수까지 구현·배포 완료. 실서비스 가동 중** → https://budongsan-virid.vercel.app
-- ⚠️ **사용자 액션 대기(2026-07-05)**: `supabase/migrations/0003_kapt_cache.sql`을 대시보드
-  **SQL Editor에서 실행** 필요 — 세대수 영구 캐시 활성화 조건. 실행 전에도 앱은 정상(캐시만 미동작).
-  MCP가 `--read-only`라 DDL 불가(PAT 우회는 권한 정책상 거부됨 → SQL Editor 경로 유지).
+- ✅ **0003 kapt_cache 마이그레이션 실행 완료(2026-07-05, 사용자가 SQL Editor에서)** —
+  prod e2e 검증: 페이지 로드 → 리스트 POST 일괄 → 국토부 → upsert, 17행 영구 저장·재호출 6.0s→0.95s.
+  (MCP `--read-only`라 DDL 불가, PAT 우회는 권한 정책상 거부 → DDL은 SQL Editor 경로가 유일.)
 - 최신 작업: 2026-07-05 — **세대수 일괄 POST + kapt_cache 캐시 / 네이버 딥링크 괄호 휴리스틱**
   (아래 섹션) + 7/3 배포 prod 실측 검증(select 35px·콘솔 경고 0·404 0·파비콘 200).
 - 그 전 배포: 2026-07-03 — **UI 버그 4종 일괄 수정**(시군구 select 세로 304px 사고 ·
@@ -40,8 +40,9 @@
 - **`/api/complex-info` POST 일괄**(BATCH_MAX 50) 신설, GET 단건(세부패널)은 유지.
 - **클라(`KakaoMap.js`)**: 리스트 상위 30행 lazy가 개별 GET×30(동시4) → **POST 1회**로.
 - **`0003_kapt_cache.sql`**: PK(lawd_cd,umd_nm,apt_nm), RLS on·정책 없음(기존 캐시 테이블 패턴).
-  ⚠️ **SQL Editor 실행 대기** — 테이블 없으면 select/upsert가 조용히 실패하고 국토부 직행(graceful,
-  실측 확인). 생성되면 **재배포 없이** 캐시 활성화.
+  ✅ **SQL Editor 실행 완료(2026-07-05)** — 테이블 없던 동안도 select/upsert가 조용히 실패하고
+  국토부 직행(graceful, 실측 확인). 생성 후 재배포 없이 캐시 활성화됨: prod 재호출 6.0s→0.95s,
+  페이지 로드 한 번에 17행 저장(평촌어바인퍼스트 3850/34 등, 매칭 실패는 설계대로 미저장).
 - 검증(로컬 dev): GET 단건 평촌어바인퍼스트 3850세대/34동 · POST 4건 1.9s(비산대주파크빌 131 일치,
   가짜 단지 kaptCode null) · 재호출 0.18s · 빈 body 400 · 브라우저 리스트 "N세대" 15건 표시(POST 1회,
   콘솔 에러 0). `npx next build` 통과.
