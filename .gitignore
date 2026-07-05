@@ -16,3 +16,6 @@ next-env.d.ts
 *.log
 npm-debug.log*
 .vercel
+
+# 개인 문서 (재무 정보 포함 — public 레포에 절대 커밋 금지)
+/private/
