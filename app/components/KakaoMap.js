@@ -732,7 +732,7 @@ export default function KakaoMap() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tradesData, area, price, priceBasis, rank, profile, sortBy, onlyBuyable, favSet, householdMap]);
 
-  // 리스트 상위 N개 행의 세대수 lazy 조회(/api/complex-info, 서버 인메모리 캐시).
+  // 리스트 상위 N개 행의 세대수 lazy 조회(/api/complex-info POST 일괄 — 서버가 kapt_cache 조회).
   useEffect(() => {
     if (!listRows) return;
     const targets = listRows
@@ -742,24 +742,23 @@ export default function KakaoMap() {
     targets.forEach((r) => infoInflightRef.current.add(r.key));
     let alive = true;
     (async () => {
-      for (let i = 0; i < targets.length; i += 4) {
-        const batch = targets.slice(i, i + 4);
-        const results = await Promise.all(
-          batch.map((r) =>
-            fetch(
-              `/api/complex-info?lawdCd=${lawdCd}&umdNm=${encodeURIComponent(r.c.umdNm)}&aptNm=${encodeURIComponent(r.c.aptNm)}`
-            )
-              .then((x) => x.json())
-              .catch(() => null)
-          )
-        );
-        if (!alive) return;
-        setHouseholdMap((prev) => {
-          const m = new Map(prev);
-          batch.forEach((r, j) => m.set(r.key, results[j]?.households ?? null));
-          return m;
-        });
-      }
+      const res = await fetch("/api/complex-info", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          lawdCd,
+          items: targets.map((r) => ({ umdNm: r.c.umdNm, aptNm: r.c.aptNm })),
+        }),
+      })
+        .then((x) => x.json())
+        .catch(() => null);
+      if (!alive) return;
+      const infos = res?.infos || [];
+      setHouseholdMap((prev) => {
+        const m = new Map(prev);
+        targets.forEach((r, j) => m.set(r.key, infos[j]?.households ?? null));
+        return m;
+      });
     })();
     return () => {
       alive = false;
@@ -1373,12 +1372,17 @@ const naverLandLink = {
 };
 
 // 네이버 부동산(m.land) 단지 검색 딥링크. ⚠️ 국토부 단지명엔 "동편마을(3단지)"처럼 괄호가 흔한데,
-// 네이버는 검색어에 괄호가 들어가면 단지 매칭에 실패("검색결과가 없습니다")한다. 괄호를 공백으로
-// 풀면 "동편마을 3단지"가 되어 해당 단지 페이지로 정확히 리다이렉트됨(2026-06-30 실측: 동편마을(3단지),
-// 한가람(두산/한양/세경/신라/삼성) 등 복구). 괄호 안이 동·필지번호(삼성(931))면 정확매칭은 안 되나
-// 최소한 검색결과는 나온다(괄호 든 리터럴은 0건). best-effort — 네이버는 단지 고정 URL 비공개.
+// 네이버는 검색어에 괄호가 들어가면 단지 매칭에 실패("검색결과가 없습니다")한다. 괄호 처리 2단계:
+// ① 괄호 안이 동·필지번호(숫자/영문/쉼표·하이픈뿐 or "제N(상가)동")면 **통째로 제거** — 네이버가
+//   모르는 토큰이라 넣으면 0건, 빼면 정확 매칭(2026-07-05 실측: 한미(A1,A2,B)·트윈팰리스(101동)·
+//   대아(제101상가동) 단지 페이지 복구. 삼성(931)류는 빼도 0건이지만 나빠지진 않음).
+// ② 한글이 든 괄호는 **공백으로 풀어 유지** — 단지 구분자라 빼면 오히려 0건(2026-06-30 실측:
+//   동편마을(3단지)·한가람(두산) 등은 내용 포함해야 정확 매칭). best-effort — 단지 고정 URL 비공개.
 function naverLandUrl(umdNm, aptNm) {
-  const q = `${umdNm} ${aptNm}`.replace(/[()]/g, " ").replace(/\s+/g, " ").trim();
+  const cleaned = aptNm.replace(/\(([^)]*)\)/g, (_, inner) =>
+    /^[0-9A-Za-z.,\-\s]*$/.test(inner) || /^제?\d+(상가)?동$/.test(inner) ? " " : ` ${inner} `
+  );
+  const q = `${umdNm} ${cleaned}`.replace(/[()]/g, " ").replace(/\s+/g, " ").trim();
   return `https://m.land.naver.com/search/result/${encodeURIComponent(q)}`;
 }
 
