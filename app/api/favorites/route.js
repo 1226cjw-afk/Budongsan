@@ -1,5 +1,5 @@
 // 즐겨찾기 CRUD. 로그인 없는 개인용 → 단일 공용 목록(서버 secret 키로 접근).
-// GET: 목록 / POST: 추가(upsert) / DELETE: 삭제(?lawdCd&umdNm&aptNm).
+// GET: 목록 / POST: 추가(upsert) / PATCH: D-day 필드 갱신(id) / DELETE: 삭제(?lawdCd&umdNm&aptNm).
 
 import { supabaseAdmin } from "../../lib/supabaseServer";
 
@@ -7,14 +7,45 @@ function noDb() {
   return Response.json({ error: "Supabase 미설정" }, { status: 500 });
 }
 
+const BASE_COLS = "id, lawd_cd, umd_nm, apt_nm, lat, lng, created_at";
+const DDAY_COLS = ", lease_end, note, note_date"; // 0004 마이그레이션 컬럼
+
 export async function GET() {
   if (!supabaseAdmin) return noDb();
-  const { data, error } = await supabaseAdmin
+  let { data, error } = await supabaseAdmin
     .from("favorites")
-    .select("id, lawd_cd, umd_nm, apt_nm, lat, lng, created_at")
+    .select(BASE_COLS + DDAY_COLS)
     .order("created_at", { ascending: false });
+  if (error) {
+    // 0004 미적용(컬럼 없음) 폴백 — D-day 없이 목록은 정상 동작.
+    ({ data, error } = await supabaseAdmin
+      .from("favorites")
+      .select(BASE_COLS)
+      .order("created_at", { ascending: false }));
+  }
   if (error) return Response.json({ error: error.message }, { status: 500 });
   return Response.json({ favorites: data });
+}
+
+// D-day 필드 갱신. body: { id, leaseEnd?, note?, noteDate? } — null/""로 지우기 가능.
+export async function PATCH(request) {
+  if (!supabaseAdmin) return noDb();
+  const body = await request.json().catch(() => ({}));
+  if (!body.id) return Response.json({ error: "id 필요" }, { status: 400 });
+  const patch = {
+    lease_end: body.leaseEnd || null,
+    note: body.note || null,
+    note_date: body.noteDate || null,
+  };
+  const { error } = await supabaseAdmin.from("favorites").update(patch).eq("id", body.id);
+  if (error) {
+    const migration = /column/i.test(error.message);
+    return Response.json(
+      { error: migration ? "0004_favorites_dday.sql 마이그레이션을 SQL Editor에서 먼저 실행하세요" : error.message },
+      { status: migration ? 409 : 500 }
+    );
+  }
+  return Response.json({ ok: true });
 }
 
 export async function POST(request) {

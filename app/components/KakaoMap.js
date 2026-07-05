@@ -60,6 +60,7 @@ const DEFAULT_PROFILE = {
   owned: null,          // { lawdCd, umdNm, aptNm, area, priceRecent, priceAvg, capturedYmd }
   ownedLoanBalance: "", // 매도 시 상환할 대출 잔액(만원)
   ownedDeposit: "",     // 매도 시 반환할 임차 보증금 정산액(만원)
+  ownedAcquiredYmd: "", // 취득일(잔금일) — 비과세(보유 2년) D-day 계산용
 };
 
 // 색 팔레트 (인라인 스타일 공통).
@@ -69,6 +70,23 @@ const C = {
   blue: "#2563eb", blueSoft: "#eff6ff",
   green: "#059669", red: "#dc2626", amber: "#f59e0b",
 };
+
+// D-day 계산(양수 = 남음). ymd "YYYY-MM-DD".
+function daysUntil(ymd) {
+  return Math.ceil((new Date(ymd + "T00:00:00") - Date.now()) / 86400000);
+}
+// 임대차 만기 라벨. 갱신청구 가능기간 = 만기 6~2개월 전(주택임대차보호법 §6의3, 2020-07-31 시행,
+// 6개월~2개월 구간은 2020-12-10 이후 계약 기준. 확인일 2026-07-05).
+function leaseLabel(leaseEnd) {
+  const dd = daysUntil(leaseEnd);
+  const end = new Date(leaseEnd + "T00:00:00");
+  const winA = new Date(end); winA.setMonth(winA.getMonth() - 6);
+  const winB = new Date(end); winB.setMonth(winB.getMonth() - 2);
+  const now = new Date();
+  let s = dd >= 0 ? `만기 D-${dd}` : `만기 ${-dd}일 지남`;
+  if (now >= winA && now <= winB) s += " · ⚠️ 갱신청구 가능기간";
+  return s;
+}
 
 function formatManwon(manwon) {
   const v = Math.round(manwon);
@@ -300,6 +318,8 @@ export default function KakaoMap() {
   }, []);
 
   const regionLabel = useMemo(() => regionName(lawdCd), [lawdCd]);
+  const [favEdit, setFavEdit] = useState(null); // 즐겨찾기 D-day 인라인 편집 {id, leaseEnd, note, noteDate}
+  const [favDdayErr, setFavDdayErr] = useState("");
   const favSet = useMemo(
     () => new Set(favorites.map((f) => favKey(f.lawd_cd, f.umd_nm, f.apt_nm))),
     [favorites]
@@ -580,6 +600,27 @@ export default function KakaoMap() {
     } catch {
       /* 무시 */
     }
+  }
+
+  // 즐겨찾기 D-day(임대차 만기·이벤트 메모) 저장. 0004 마이그레이션 미적용이면 서버가 409로 안내.
+  async function saveFavDday() {
+    if (!favEdit) return;
+    setFavDdayErr("");
+    const r = await fetch("/api/favorites", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        id: favEdit.id,
+        leaseEnd: favEdit.leaseEnd,
+        note: favEdit.note,
+        noteDate: favEdit.noteDate,
+      }),
+    })
+      .then((x) => x.json())
+      .catch(() => ({ error: "저장 실패" }));
+    if (r.error) return setFavDdayErr(r.error);
+    setFavEdit(null);
+    loadFavorites();
   }
 
   async function toggleFavorite() {
@@ -1051,6 +1092,26 @@ export default function KakaoMap() {
                     <span style={fieldLabel}>보증금 반환</span>
                     <input type="number" value={profile.ownedDeposit} onChange={(e) => updateProfile({ ownedDeposit: e.target.value })} placeholder="0" style={fieldInput} />
                   </label>
+                  <label style={fieldRow}>
+                    <span style={fieldLabel}>취득일(잔금)</span>
+                    <input type="date" value={profile.ownedAcquiredYmd} onChange={(e) => updateProfile({ ownedAcquiredYmd: e.target.value })} style={fieldInput} />
+                  </label>
+                  {profile.ownedAcquiredYmd && (() => {
+                    // 1주택 양도세 비과세: 보유 2년 + 12억 이하(소득세법 §89①3, 고가 기준 12억은 2021-12-08~).
+                    // 양도일 = 잔금일(둘 중 빠른 등기일). 취득 당시 조정대상지역이면 거주 2년 요건 추가.
+                    // 단기양도 중과: 보유 1년 미만 70% / 1~2년 60% (2021-06-01 이후 양도분, 확인일 2026-07-05).
+                    const free = new Date(profile.ownedAcquiredYmd);
+                    free.setFullYear(free.getFullYear() + 2);
+                    const dd = Math.ceil((free - Date.now()) / 86400000);
+                    const freeYmd = free.toISOString().slice(0, 10);
+                    return (
+                      <div style={{ fontSize: 11, marginTop: 3, lineHeight: 1.5, fontWeight: 600, color: dd > 0 ? "#b45309" : C.green }}>
+                        {dd > 0
+                          ? `⏳ 비과세(보유 2년) ${freeYmd}부터 · D-${dd} — 그 전 양도(잔금)는 단기중과 60~70%`
+                          : "✓ 보유 2년 충족 — 12억 이하 비과세 가능(잔금일 기준 · 취득 시 조정지역이었다면 거주요건 별도, 세무사 확인)"}
+                      </div>
+                    );
+                  })()}
                   <div style={{ fontSize: 11, color: C.sub, marginTop: 4, lineHeight: 1.5 }}>
                     매도가 <b style={{ color: C.text }}>{formatManwon(ownedSalePrice)}</b>
                     ({priceBasis === "recent" ? "최근가" : "평균가"} · {owned.capturedYmd} 시세)
@@ -1099,14 +1160,64 @@ export default function KakaoMap() {
         )}
 
         {showFavs && (
-          <div style={{ ...drawer, maxHeight: 220, overflowY: "auto" }}>
+          <div style={{ ...drawer, maxHeight: 280, overflowY: "auto" }}>
             {favorites.length === 0 ? (
               <div style={hintText}>즐겨찾기가 없습니다</div>
             ) : (
               favorites.map((f) => (
-                <div key={f.id} onClick={() => gotoFavorite(f)} style={favRow}>
-                  <span style={{ color: C.amber }}>★</span> {f.apt_nm}
-                  <span style={{ color: C.muted }}> · {regionName(f.lawd_cd)} {f.umd_nm}</span>
+                <div key={f.id} style={favRow}>
+                  <div onClick={() => gotoFavorite(f)} style={{ cursor: "pointer", display: "flex", alignItems: "baseline" }}>
+                    <span style={{ flexGrow: 1, minWidth: 0 }}>
+                      <span style={{ color: C.amber }}>★</span> {f.apt_nm}
+                      <span style={{ color: C.muted }}> · {regionName(f.lawd_cd)} {f.umd_nm}</span>
+                    </span>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setFavDdayErr("");
+                        setFavEdit(
+                          favEdit?.id === f.id
+                            ? null
+                            : { id: f.id, leaseEnd: f.lease_end || "", note: f.note || "", noteDate: f.note_date || "" }
+                        );
+                      }}
+                      style={favEditBtn}
+                      title="임대차 만기·이벤트 메모 D-day 입력"
+                    >
+                      ✎
+                    </button>
+                  </div>
+                  {favEdit?.id !== f.id && (f.lease_end || f.note) && (
+                    <div style={favDdayLine}>
+                      {f.lease_end && <span>🔑 {leaseLabel(f.lease_end)}</span>}
+                      {f.note && (
+                        <span>
+                          📌 {f.note}
+                          {f.note_date ? ` · ${daysUntil(f.note_date) >= 0 ? "D-" + daysUntil(f.note_date) : daysUntil(f.note_date) * -1 + "일 지남"}` : ""}
+                        </span>
+                      )}
+                    </div>
+                  )}
+                  {favEdit?.id === f.id && (
+                    <div style={favEditBox}>
+                      <label style={fieldRow}>
+                        <span style={fieldLabel}>임대차 만기</span>
+                        <input type="date" value={favEdit.leaseEnd} onChange={(e) => setFavEdit({ ...favEdit, leaseEnd: e.target.value })} style={fieldInput} />
+                      </label>
+                      <label style={fieldRow}>
+                        <span style={fieldLabel}>이벤트 메모</span>
+                        <input type="text" value={favEdit.note} onChange={(e) => setFavEdit({ ...favEdit, note: e.target.value })} placeholder="예: 재건축 결정" style={fieldInput} />
+                      </label>
+                      <label style={fieldRow}>
+                        <span style={fieldLabel}>이벤트 날짜</span>
+                        <input type="date" value={favEdit.noteDate} onChange={(e) => setFavEdit({ ...favEdit, noteDate: e.target.value })} style={fieldInput} />
+                      </label>
+                      <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 4 }}>
+                        <button onClick={saveFavDday} style={favSaveBtn}>저장</button>
+                        {favDdayErr && <span style={{ fontSize: 11, color: C.red }}>{favDdayErr}</span>}
+                      </div>
+                    </div>
+                  )}
                 </div>
               ))
             )}
@@ -1398,9 +1509,27 @@ const fieldInput = {
   fontSize: 12, background: "#fff", color: C.text,
 };
 const favRow = {
-  fontSize: 12, color: C.text, padding: "6px 2px", cursor: "pointer",
-  borderBottom: `1px solid ${C.divider}`, whiteSpace: "nowrap",
-  overflow: "hidden", textOverflow: "ellipsis",
+  fontSize: 12, color: C.text, padding: "6px 2px",
+  borderBottom: `1px solid ${C.divider}`,
+};
+// 즐겨찾기 D-day(임대차 만기·이벤트 메모) UI.
+const favEditBtn = {
+  flexShrink: 0, marginLeft: 6, fontSize: 11, padding: "0 6px", borderRadius: 6,
+  borderWidth: 1, borderStyle: "solid", borderColor: C.border,
+  background: "#fff", color: C.muted, cursor: "pointer",
+};
+const favDdayLine = {
+  display: "flex", gap: 10, flexWrap: "wrap", marginTop: 3,
+  fontSize: 11, fontWeight: 600, color: "#b45309",
+};
+const favEditBox = {
+  marginTop: 4, padding: "6px 8px", background: C.blueSoft,
+  borderWidth: 1, borderStyle: "solid", borderColor: "#dbeafe", borderRadius: 8,
+};
+const favSaveBtn = {
+  fontSize: 11, fontWeight: 700, padding: "3px 12px", borderRadius: 6,
+  borderWidth: 1, borderStyle: "solid", borderColor: C.blue,
+  background: C.blue, color: "#fff", cursor: "pointer",
 };
 
 // 단지 리스트 패널(네이버식) — 정렬 바 + 행 목록.
