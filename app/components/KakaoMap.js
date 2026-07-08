@@ -991,7 +991,10 @@ export default function KakaoMap() {
 
       {/* 좌측 상단 컨트롤 (모바일: 상단 전체폭 바) */}
       <div style={controlPanelStyle}>
-        <div style={panelTitle}>🏠 실거래 · 대출 비교</div>
+        <div style={{ ...panelTitle, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <span>🏠 실거래 · 대출 비교</span>
+          <a href="/news" style={newsTabLink}>📰 뉴스</a>
+        </div>
 
         <select
           value={lawdCd}
@@ -1468,6 +1471,10 @@ const controlPanel = {
   fontSize: 13, display: "flex", flexDirection: "column", gap: 9, width: 300,
 };
 const panelTitle = { fontSize: 13, fontWeight: 700, color: C.text, letterSpacing: "-0.01em" };
+const newsTabLink = {
+  fontSize: 11, fontWeight: 600, color: C.blue, textDecoration: "none",
+  padding: "2px 8px", background: C.blueSoft, borderRadius: 999,
+};
 const detailPanel = {
   position: "absolute", top: 14, right: 14, bottom: 14, zIndex: 10, width: 320,
   overflowY: "auto", background: "#fff", padding: "18px 20px",

@@ -7,7 +7,10 @@
 - ✅ **0003 kapt_cache 마이그레이션 실행 완료(2026-07-05, 사용자가 SQL Editor에서)** —
   prod e2e 검증: 페이지 로드 → 리스트 POST 일괄 → 국토부 → upsert, 17행 영구 저장·재호출 6.0s→0.95s.
   (MCP `--read-only`라 DDL 불가, PAT 우회는 권한 정책상 거부 → DDL은 SQL Editor 경로가 유일.)
-- 최신 작업: 2026-07-05 — **갈아타기 계산기·선반영 게이지·D-day 3종**(아래 섹션, 0004 대기) +
+- 최신 작업: 2026-07-08 — **📰 데일리 부동산 뉴스 탭**(아래 섹션) — /news 페이지 + cron 수집
+  (구글 RSS, 네이버 API 키 등록 시 자동 전환). ✨ **supabase MCP로 DDL 성공**(0005 — 7/5의
+  read-only 제약이 풀림, 이후 마이그레이션은 MCP `apply_migration`로 직접 가능).
+- 그 전: 2026-07-05 — **갈아타기 계산기·선반영 게이지·D-day 3종**(아래 섹션, 0004 대기) +
   **세대수 일괄 POST + kapt_cache / 네이버 딥링크 괄호 휴리스틱** + 7/3 배포 prod 실측 검증.
 - 그 전 배포: 2026-07-03 — **UI 버그 4종 일괄 수정**(시군구 select 세로 304px 사고 ·
   즐겨찾기 이동 panTo/setBounds 경합 · pyeongCard shorthand 경고 · 파비콘 404). 아래 섹션 참조.
@@ -26,6 +29,22 @@
 남은 후보: **갈아타기 백로그 5종 전부 당일 구현 완료(2026-07-05, 아래 섹션)**.
 - ✅ 0004 마이그레이션도 실행 완료(사용자, SQL Editor) — prod에서 PATCH 저장→조회→원복
   왕복 검증 통과. 잔여 백로그 없음.
+
+## ✅ 데일리 부동산 뉴스 탭 (2026-07-08)
+카톡방 수집 요청의 합법 대안으로 채택(카톡은 읽기 API 없음·약관 리스크 → 비추천 합의).
+- **수집(`app/lib/news.js`)**: 2단 소스 — `NAVER_CLIENT_ID/SECRET` 있으면 네이버 뉴스 검색 API,
+  없으면 **구글 뉴스 RSS(키 불필요, 현재 가동 경로)**. 키워드 = 기본 4종(정책/매매/대출규제/재건축)
+  + **즐겨찾기 지역 자동**(`regionToken`+"아파트" — 동안구·송파구 실측 반영). supabase 미의존 +
+  `./regions.js` 확장자 import → raw node 단독 검증 가능(trades.js의 ERR_MODULE_NOT_FOUND 회피).
+- **저장(`0005_news_items.sql`)**: link PK로 자연 중복 제거(upsert ignoreDuplicates → 재실행
+  inserted 0 실측). 30일 초과분 cron이 프루닝. ✨ **MCP `apply_migration`으로 DDL 적용 성공**.
+- **API**: `/api/cron/news`(CRON_SECRET 보호, 키워드 동시 수집→upsert→프루닝, 6키워드 177건/3.1s)
+  · `/api/news`(최신 300건, 필터는 클라). `vercel.json` cron 2개째(21:30 UTC = 06:30 KST, Hobby 한도 2 딱).
+- **UI(`app/news/page.js`)**: 날짜 그룹(오늘/어제 라벨) 리스트 + 키워드 칩 필터(재요청 없음) +
+  "지금 수집" 버튼(로컬용, prod는 401→안내 문구). 지도 컨트롤 패널 타이틀에 **📰 뉴스** 진입 링크
+  (기존 `newsLink` 상수와 충돌해 `newsTabLink`로 명명). 검증: Playwright 데스크톱·모바일 390px·
+  칩 필터 30건·지도→뉴스 클릭 이동 전부 통과, `npx next build` 통과.
+- 남은 선택지(미착수): 네이버 API 키 등록(요약문 확보), 기사 제목↔즐겨찾기 단지명 매칭 강조.
 
 ## ✅ 갈아타기 계산기 + 선반영 게이지 + D-day 3종 (2026-07-05)
 사용자 실사용 고민(보유 41㎡ 매도→평수 상향 이사)을 지원하며 확인된 빈틈 5건을 당일 구현.
