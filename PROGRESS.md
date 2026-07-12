@@ -7,8 +7,10 @@
 - ✅ **0003 kapt_cache 마이그레이션 실행 완료(2026-07-05, 사용자가 SQL Editor에서)** —
   prod e2e 검증: 페이지 로드 → 리스트 POST 일괄 → 국토부 → upsert, 17행 영구 저장·재호출 6.0s→0.95s.
   (MCP `--read-only`라 DDL 불가, PAT 우회는 권한 정책상 거부 → DDL은 SQL Editor 경로가 유일.)
-- 최신 작업: 2026-07-12 — **뉴스 탭 수도권·매매 위주 개편**(아래 섹션) — 기본 키워드 8종 재편 +
-  수도권 필터(수집·조회 양쪽 적용) + 카테고리 칩 7종·⭐관심지역 칩(DB 컬럼 없이 제목 룰 분류).
+- 최신 작업: 2026-07-12 — **전체 리팩토링**(아래 섹션) — KakaoMap 1691→1263줄(스타일·헬퍼·
+  서브컴포넌트 8개 모듈 분리 + bestGap/filterTrades 공용화) + cron 인증·noDb 응답 헬퍼. 동작 불변
+  (Playwright 13항목 ALL PASS). 같은 날 **뉴스 탭 수도권·매매 위주 개편**(아래 섹션) — 기본 키워드
+  8종 재편 + 수도권 필터(수집·조회 양쪽 적용) + 카테고리 칩 7종·⭐관심지역 칩(제목 룰 분류).
 - 그 전: 2026-07-08 — **📰 데일리 부동산 뉴스 탭**(아래 섹션) — /news 페이지 + cron 수집
   (구글 RSS, 네이버 API 키 등록 시 자동 전환). ✨ **supabase MCP로 DDL 성공**(0005 — 7/5의
   read-only 제약이 풀림, 이후 마이그레이션은 MCP `apply_migration`로 직접 가능).
@@ -31,6 +33,25 @@
 남은 후보: **갈아타기 백로그 5종 전부 당일 구현 완료(2026-07-05, 아래 섹션)**.
 - ✅ 0004 마이그레이션도 실행 완료(사용자, SQL Editor) — prod에서 PATCH 저장→조회→원복
   왕복 검증 통과. 잔여 백로그 없음.
+
+## ✅ 전체 리팩토링 — KakaoMap 모듈 분리 + 서버 헬퍼 공용화 (2026-07-12)
+동작 불변 리팩토링. 서버(lib·API)는 원래 깔끔해서 소소한 중복만, 본체는 KakaoMap.js 분리.
+- **KakaoMap.js 1691→1263줄** — 분리된 모듈(임포트 이름 유지라 콜사이트 무변경):
+  - `components/mapStyles.js`(스타일 상수 ~60개 — **이름 grep은 이제 이 파일에서**) +
+    `lib/palette.js`(C 팔레트·PANEL_SHADOW — 뉴스 페이지와 공유, 중복 정의 제거)
+  - `components/TrendChart.js`·`HelpModal.js`(표현 전용 서브컴포넌트)
+  - `lib/format.js`(formatManwon·shortDate·formatAgo·daysUntil·leaseLabel) ·
+    `lib/tradeStats.js`(summarize·groupByPyeong·distMeters·favKey·filterTrades) ·
+    `lib/naverLand.js`(naverLandUrl + 괄호 휴리스틱 주석 보존)
+- **중복 계산 공용화**: 마커 `isComplexBuyable`(단락 불리언)과 리스트 gap 루프가 같은 로직이라
+  `bestGap()`(최대 여유 or null) 하나로 통일 — 색칠 = 여유≥0, 수학적 동치 확인. 면적·가격 필터도
+  `filterTrades()` 공유. ⚠️ 지뢰(마커 effect deps·stale 가드·panTo/fitRef·listRows tradesData)는 무변경.
+- **서버**: `lib/cronAuth.js`(cron 2개 라우트의 Bearer 인증 블록 공용) +
+  `supabaseServer.noDbResponse()`(4개 라우트의 "Supabase 미설정" 응답 공용).
+- 검증: `npx next build` 통과 · Playwright 13항목 ALL PASS(핀 132개+자금 색칠 107/25 ·
+  구매가능 카운트 · 리스트 배지 · 세부패널 · 추세차트+3년 토글 · 도움말 모달 · 즐겨찾기 드로어 ·
+  모바일 목록 시트 · 뉴스 칩) + 스크린샷 육안 · cron 로컬 호출 ok · dev 로그 경고 0.
+- 미착수(선택): 세부패널·드로어의 컴포넌트化(props 10+개 필요 — 위험 대비 이득 낮아 보류).
 
 ## ✅ 뉴스 탭 수도권·매매 위주 개편 + 카테고리 칩 (2026-07-12)
 사용자 요청: 매매 정보 위주 + 아파트 뉴스는 수도권(서울·경기·인천)만, 타지역 배제.
