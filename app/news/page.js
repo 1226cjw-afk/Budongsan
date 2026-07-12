@@ -1,10 +1,20 @@
 "use client";
 
 // 📰 데일리 부동산 뉴스 — /api/cron/news 가 매일 모아둔 기사를 날짜별로 보여준다.
-// 필터(키워드 칩)는 재요청 없이 클라이언트에서 처리(/api/news 가 최신 전체를 내려줌).
+// 필터(카테고리 칩)는 재요청 없이 클라이언트에서 처리(/api/news 가 최신 전체를 내려줌).
+// 카테고리는 lib/news.js의 classifyNews(제목 룰)로 렌더 시 계산 — 과거 기사에도 소급.
 // 디자인은 지도 패널(KakaoMap.js)의 팔레트·흰 카드 언어를 따른다.
 
 import { useEffect, useMemo, useState } from "react";
+import { classifyNews, NEWS_CATEGORIES } from "../lib/news";
+
+const CAT_EMOJI = {
+  "매매·시세": "📈", "정책·세금": "🏛️", "대출·금리": "💰",
+  "분양·청약": "🏗️", "재건축·재개발": "🔨", "전월세": "🏠", "기타": "📎",
+};
+
+// 즐겨찾기 지역 키워드("분당구 아파트" 꼴)인지 — 기본 키워드는 " 아파트"로 끝나지 않음.
+const isRegionKeyword = (k) => (k || "").endsWith(" 아파트");
 
 const C = {
   text: "#0f172a", sub: "#64748b", muted: "#94a3b8",
@@ -30,7 +40,7 @@ function timeLabel(iso) {
 export default function NewsPage() {
   const [items, setItems] = useState(null); // null = 로딩 중
   const [error, setError] = useState("");
-  const [kw, setKw] = useState(""); // "" = 전체
+  const [sel, setSel] = useState(""); // "" = 전체 | "region" = ⭐ 관심지역 | 카테고리명
   const [collecting, setCollecting] = useState(false);
   const [notice, setNotice] = useState("");
 
@@ -67,14 +77,22 @@ export default function NewsPage() {
     setCollecting(false);
   };
 
-  const keywords = useMemo(
-    () => (items ? [...new Set(items.map((i) => i.keyword))] : []),
+  // 카테고리는 제목에서 한 번만 계산해 붙여둔다.
+  const withCat = useMemo(
+    () => (items || []).map((it) => ({ ...it, cat: classifyNews(it.title) })),
     [items]
   );
-  const filtered = useMemo(
-    () => (kw ? (items || []).filter((i) => i.keyword === kw) : items || []),
-    [items, kw]
-  );
+  // 실제 기사가 있는 카테고리만 칩으로 노출(순서는 NEWS_CATEGORIES = 매매·시세 우선).
+  const cats = useMemo(() => {
+    const present = new Set(withCat.map((it) => it.cat));
+    return NEWS_CATEGORIES.filter((c) => present.has(c));
+  }, [withCat]);
+  const hasRegion = useMemo(() => withCat.some((it) => isRegionKeyword(it.keyword)), [withCat]);
+  const filtered = useMemo(() => {
+    if (!sel) return withCat;
+    if (sel === "region") return withCat.filter((it) => isRegionKeyword(it.keyword));
+    return withCat.filter((it) => it.cat === sel);
+  }, [withCat, sel]);
   // 발행일 기준 날짜 그룹(내려온 순서 = 최신순 유지). 발행일 결측은 수집일로.
   const groups = useMemo(() => {
     const map = new Map();
@@ -97,20 +115,25 @@ export default function NewsPage() {
         </div>
         <h1 style={title}>📰 부동산 뉴스</h1>
         <div style={subtitle}>
-          매일 아침 6:30 자동 수집 · 기본 키워드 + 즐겨찾기 지역
+          매일 아침 6:30 자동 수집 · 수도권(서울·경기·인천) 매매 위주 + 즐겨찾기 지역
           {notice && <span style={noticeText}> — {notice}</span>}
         </div>
 
-        {keywords.length > 0 && (
+        {withCat.length > 0 && (
           <div style={chipRow}>
-            <button onClick={() => setKw("")} style={{ ...chip, ...(kw === "" ? chipOn : null) }}>
+            <button onClick={() => setSel("")} style={{ ...chip, ...(sel === "" ? chipOn : null) }}>
               전체
             </button>
-            {keywords.map((k) => (
-              <button key={k} onClick={() => setKw(k)} style={{ ...chip, ...(kw === k ? chipOn : null) }}>
-                {k}
+            {cats.map((c) => (
+              <button key={c} onClick={() => setSel(c)} style={{ ...chip, ...(sel === c ? chipOn : null) }}>
+                {CAT_EMOJI[c]} {c}
               </button>
             ))}
+            {hasRegion && (
+              <button onClick={() => setSel("region")} style={{ ...chip, ...(sel === "region" ? chipOn : null) }}>
+                ⭐ 관심지역
+              </button>
+            )}
           </div>
         )}
 
@@ -144,7 +167,10 @@ export default function NewsPage() {
                     <div style={rowMeta}>
                       {it.source && <span>{it.source}</span>}
                       {it.published_at && <span>{timeLabel(it.published_at)}</span>}
-                      <span style={metaKw}>{it.keyword}</span>
+                      <span style={metaKw}>{CAT_EMOJI[it.cat]} {it.cat}</span>
+                      {isRegionKeyword(it.keyword) && (
+                        <span style={metaKw}>⭐ {it.keyword.replace(/ 아파트$/, "")}</span>
+                      )}
                     </div>
                   </a>
                 ))}
