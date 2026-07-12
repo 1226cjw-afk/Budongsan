@@ -7,6 +7,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { classifyNews, NEWS_CATEGORIES } from "../lib/news";
+import { C } from "../lib/palette";
 
 const CAT_EMOJI = {
   "매매·시세": "📈", "정책·세금": "🏛️", "대출·금리": "💰",
@@ -15,12 +16,6 @@ const CAT_EMOJI = {
 
 // 즐겨찾기 지역 키워드("분당구 아파트" 꼴)인지 — 기본 키워드는 " 아파트"로 끝나지 않음.
 const isRegionKeyword = (k) => (k || "").endsWith(" 아파트");
-
-const C = {
-  text: "#0f172a", sub: "#64748b", muted: "#94a3b8",
-  border: "#e2e8f0", divider: "#f1f5f9",
-  blue: "#2563eb", blueSoft: "#eff6ff", red: "#dc2626",
-};
 
 // "오늘 · 7월 8일 (화)" 꼴 날짜 그룹 라벨.
 function dateLabel(iso) {

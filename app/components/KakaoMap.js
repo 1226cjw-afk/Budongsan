@@ -3,6 +3,23 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { REGIONS, ALL_REGIONS, regionName } from "../lib/regions";
 import { calcMaxLoan, isRegulated } from "../lib/loanPolicy";
+import { C } from "../lib/palette";
+import { daysUntil, leaseLabel, formatManwon, shortDate, formatAgo } from "../lib/format";
+import { favKey, distMeters, summarize, groupByPyeong, filterTrades } from "../lib/tradeStats";
+import { naverLandUrl } from "../lib/naverLand";
+import TrendChart from "./TrendChart";
+import HelpModal from "./HelpModal";
+import {
+  controlPanel, panelTitle, newsTabLink, detailPanel, selectStyle, pillBtn, pillBtnOn,
+  statusText, refreshBtn, hintLine, hintText, legendRow, legendItem, legendDot,
+  drawer, drawerHead, fieldRow, fieldLabel, fieldInput,
+  favRow, favEditBtn, favDdayLine, favEditBox, favSaveBtn,
+  sortBar, sortSelect, onlyBuyLabel, listScroll, rowTop, rowName, rowPrice, rowSub, rowBadges,
+  hotBadge, upBadge, downBadge, rebuildBadge, gapOkBadge, gapNoBadge, excessBadge, excessHotBadge,
+  mobileListSheet, closeBtn, starBtn, sectionLabel, newsLink, naverLandLink,
+  ownedBtn, ownedBtnOn, ownedBox, ownedClearBtn, noticeBox, pyeongCard, pyeongCardOn, loanRow,
+  basisToggle, basisBtn, basisBtnOn, helpBtn, bindingTag, regBadge, nonRegBadge, linkBtn,
+} from "./mapStyles";
 
 // 카카오맵 + 국토부 실거래가. 지도 이동 시 중심 지역을 자동 인식해 그 시군구 데이터를 로드하고,
 // 단지 클릭(또는 지도 빈 곳 클릭→가까운 단지) 시 우측 패널에 평형별 시세·대출 분석을 보여준다.
@@ -28,8 +45,6 @@ const PRICE_FILTERS = [
   { value: "p3", label: "6~9억", min: 60000, max: 90000 },
   { value: "p4", label: "9~12억", min: 90000, max: 120000 },
 ];
-
-const PYEONG = 3.3058;
 
 // 리스트 패널: 배지·정렬 기준.
 const HOT_PCT = 15; // 1년 상승률 이 값 이상이면 🔥 급등 배지(핀에도 표시)
@@ -62,211 +77,6 @@ const DEFAULT_PROFILE = {
   ownedDeposit: "",     // 매도 시 반환할 임차 보증금 정산액(만원)
   ownedAcquiredYmd: "", // 취득일(잔금일) — 비과세(보유 2년) D-day 계산용
 };
-
-// 색 팔레트 (인라인 스타일 공통).
-const C = {
-  text: "#0f172a", sub: "#64748b", muted: "#94a3b8",
-  border: "#e2e8f0", divider: "#f1f5f9",
-  blue: "#2563eb", blueSoft: "#eff6ff",
-  green: "#059669", red: "#dc2626", amber: "#f59e0b",
-};
-
-// D-day 계산(양수 = 남음). ymd "YYYY-MM-DD".
-function daysUntil(ymd) {
-  return Math.ceil((new Date(ymd + "T00:00:00") - Date.now()) / 86400000);
-}
-// 임대차 만기 라벨. 갱신청구 가능기간 = 만기 6~2개월 전(주택임대차보호법 §6의3, 2020-07-31 시행,
-// 6개월~2개월 구간은 2020-12-10 이후 계약 기준. 확인일 2026-07-05).
-function leaseLabel(leaseEnd) {
-  const dd = daysUntil(leaseEnd);
-  const end = new Date(leaseEnd + "T00:00:00");
-  const winA = new Date(end); winA.setMonth(winA.getMonth() - 6);
-  const winB = new Date(end); winB.setMonth(winB.getMonth() - 2);
-  const now = new Date();
-  let s = dd >= 0 ? `만기 D-${dd}` : `만기 ${-dd}일 지남`;
-  if (now >= winA && now <= winB) s += " · ⚠️ 갱신청구 가능기간";
-  return s;
-}
-
-function formatManwon(manwon) {
-  const v = Math.round(manwon);
-  const eok = Math.floor(v / 10000);
-  const rest = v % 10000;
-  if (eok && rest) return `${eok}억 ${rest.toLocaleString()}`;
-  if (eok) return `${eok}억`;
-  return rest.toLocaleString();
-}
-
-function shortDate(ymd) {
-  return ymd ? ymd.slice(2).replace(/-/g, ".") : "";
-}
-
-// 갱신 시각(ISO) → "방금 / N분 전 / N시간 전 / N일 전".
-function formatAgo(iso) {
-  if (!iso) return null;
-  const sec = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
-  if (sec < 60) return "방금";
-  const min = Math.floor(sec / 60);
-  if (min < 60) return `${min}분 전`;
-  const hr = Math.floor(min / 60);
-  if (hr < 24) return `${hr}시간 전`;
-  return `${Math.floor(hr / 24)}일 전`;
-}
-
-function distMeters(lat1, lng1, lat2, lng2) {
-  const R = 6371000;
-  const toRad = (d) => (d * Math.PI) / 180;
-  const dLat = toRad(lat2 - lat1);
-  const dLng = toRad(lng2 - lng1);
-  const a =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
-  return 2 * R * Math.asin(Math.sqrt(a));
-}
-
-function summarize(trades) {
-  if (!trades.length) return null;
-  const sum = trades.reduce((s, t) => s + t.dealAmount, 0);
-  const recent = trades.reduce((a, b) => (a.dealYmd >= b.dealYmd ? a : b));
-  return {
-    count: trades.length,
-    avg: sum / trades.length,
-    recentAmount: recent.dealAmount,
-    recentDate: recent.dealYmd,
-  };
-}
-
-function groupByPyeong(trades) {
-  const m = new Map();
-  for (const t of trades) {
-    const key = Math.round(t.area);
-    if (!m.has(key)) m.set(key, []);
-    m.get(key).push(t);
-  }
-  return [...m.entries()]
-    .sort((a, b) => a[0] - b[0])
-    .map(([m2, arr]) => {
-      const s = summarize(arr);
-      return {
-        m2,
-        pyeong: Math.round(m2 / PYEONG),
-        count: s.count,
-        avg: s.avg,
-        recentAmount: s.recentAmount,
-        recentDate: s.recentDate,
-      };
-    });
-}
-
-const favKey = (lawdCd, umdNm, aptNm) => `${lawdCd}|${umdNm}|${aptNm}`;
-
-// Y축 가격 눈금용 축약 라벨. 5.2억 / 0.8억.
-function eokLabel(manwon) {
-  return (manwon / 10000).toFixed(1) + "억";
-}
-
-// 월별 시세 추세 라인차트(SVG) + 좌측 Y축 가격 눈금. series: [{ymd, avg, count}] 과거→현재.
-function TrendChart({ series, areaLabel }) {
-  const pts = series.filter((s) => s.avg != null);
-  if (pts.length < 2) {
-    return (
-      <div style={hintText}>{areaLabel ? `${areaLabel} ` : ""}추세를 그릴 거래가 부족합니다.</div>
-    );
-  }
-  const W = 280, H = 116, AX = 44, PADX = 8, PADTOP = 8, PADBOT = 18;
-  const plotW = W - AX - PADX;
-  const plotH = H - PADTOP - PADBOT;
-  const vals = pts.map((p) => p.avg);
-  const min = Math.min(...vals);
-  const max = Math.max(...vals);
-  const span = max - min || 1;
-  const n = series.length;
-  const dense = n > 16; // 3년(36개월) 등 점이 많으면 마커 숨기고 축 라벨에 중간점 추가
-  const x = (i) => AX + (i * plotW) / (n - 1);
-  const y = (v) => PADTOP + (1 - (v - min) / span) * plotH;
-  const line = pts.map((p) => `${x(series.indexOf(p))},${y(p.avg)}`).join(" ");
-  const first = pts[0];
-  const last = pts[pts.length - 1];
-  const mid = pts[Math.floor(pts.length / 2)];
-  const up = last.avg >= first.avg;
-  const stroke = up ? C.red : C.blue;
-  const TICKS = 4;
-  const tickVals = Array.from({ length: TICKS + 1 }, (_, k) => min + (span * k) / TICKS);
-  return (
-    <div style={{ marginTop: 6 }}>
-      <svg width={W} height={H} style={{ display: "block" }}>
-        {tickVals.map((tv, k) => (
-          <g key={k}>
-            <line x1={AX} y1={y(tv)} x2={W - PADX} y2={y(tv)} stroke="#eef2f7" strokeWidth="1" />
-            <text x={AX - 5} y={y(tv) + 3} textAnchor="end" fontSize="9" fill={C.muted}>
-              {eokLabel(tv)}
-            </text>
-          </g>
-        ))}
-        <polyline points={line} fill="none" stroke={stroke} strokeWidth="2" />
-        {!dense && pts.map((p) => (
-          <circle key={p.ymd} cx={x(series.indexOf(p))} cy={y(p.avg)} r="2.5" fill={stroke} />
-        ))}
-      </svg>
-      <div
-        style={{
-          display: "flex", justifyContent: "space-between",
-          fontSize: 10, color: C.muted, marginTop: 2, paddingLeft: AX - PADX,
-        }}
-      >
-        <span>{first.ymd.slice(2, 4)}.{first.ymd.slice(4)}</span>
-        {dense && <span>{mid.ymd.slice(2, 4)}.{mid.ymd.slice(4)}</span>}
-        <span>{last.ymd.slice(2, 4)}.{last.ymd.slice(4)}</span>
-      </div>
-    </div>
-  );
-}
-
-// LTV/DSR 계산식 도움말 모달.
-function HelpModal({ onClose }) {
-  return (
-    <div style={modalOverlay} onClick={onClose}>
-      <div style={modalCard} onClick={(e) => e.stopPropagation()}>
-        <button onClick={onClose} style={closeBtn} aria-label="닫기">×</button>
-        <div style={{ fontSize: 16, fontWeight: 700, color: C.text, paddingRight: 20 }}>
-          대출 한도는 이렇게 계산해요
-        </div>
-
-        <div style={helpBlock}>
-          <div style={helpHead}>LTV · 담보인정비율</div>
-          <div style={helpBody}>
-            집값 대비 빌릴 수 있는 비율이에요.<br />
-            • 규제지역 <b>40%</b> (생애최초 70%) · 비규제 <b>70%</b><br />
-            • 집값 한도 상한: 15억↓ <b>6억</b> / 15~25억 <b>4억</b> / 25억↑ <b>2억</b><br />
-            <span style={{ color: C.sub }}>LTV 한도 = min(집값 × 비율, 한도 상한)</span>
-          </div>
-        </div>
-
-        <div style={helpBlock}>
-          <div style={helpHead}>DSR · 총부채원리금상환비율</div>
-          <div style={helpBody}>
-            연소득 대비 1년 원리금 상환액이 <b>40%</b>를 넘지 않게 제한해요.<br />
-            • 심사 땐 <b>스트레스 금리</b>(규제지역 +3.0%p)를 더해 더 깐깐하게 계산<br />
-            <span style={{ color: C.sub }}>DSR 한도 ≈ (연소득 × 40% − 기존 상환액) ÷ 1만원당 연상환액</span>
-          </div>
-        </div>
-
-        <div style={helpBlock}>
-          <div style={helpHead}>최종 한도</div>
-          <div style={helpBody}>
-            <b>LTV·DSR 중 더 작은 값</b>이 실제 대출 가능액이에요.<br />
-            필요 자기자금 = 집값 − 대출 가능액.
-          </div>
-        </div>
-
-        <div style={{ fontSize: 11, color: C.muted, marginTop: 12, lineHeight: 1.5 }}>
-          근거: 10.15 대책(2025-10-16 시행) + 스트레스 DSR 3단계. 실제 한도는 은행·신용·DTI 등에
-          따라 달라질 수 있으며, 참고용 추정치예요.
-        </div>
-      </div>
-    </div>
-  );
-}
 
 export default function KakaoMap() {
   const containerRef = useRef(null);
@@ -377,15 +187,19 @@ export default function KakaoMap() {
     });
   }
 
-  // 한 단지의 평형 중 하나라도 보유자산으로 매수 가능하면 true(마커 초록), 전부 불가면 false(빨강).
-  // priceBasis(최근/평균) 기준가로 평형별 대출·필요자금을 계산해 보유자산과 비교.
-  function isComplexBuyable(hits) {
+  // 한 단지에서 대출 가능한 평형 중 최대 자금 여유(보유자산 − 필요자금, 만원). 전 평형 대출 불가면 null.
+  // priceBasis(최근/평균) 기준가 사용. 마커 색칠(여유 ≥ 0 = 초록)과 리스트 여유 배지·정렬이 이 계산을 공유.
+  function bestGap(hits) {
+    let gap = null;
     for (const g of groupByPyeong(hits)) {
       const gp = priceBasis === "recent" ? g.recentAmount : g.avg;
       const ln = loanForPrice(gp);
-      if (ln && ln.maxLoan > 0 && assets >= ln.requiredCash) return true;
+      if (ln && ln.maxLoan > 0) {
+        const d = assets - ln.requiredCash;
+        if (gap == null || d > gap) gap = d;
+      }
     }
-    return false;
+    return gap;
   }
 
   // 지도 초기화 (1회) — services 라이브러리로 좌표→지역 변환 + 빈 곳 클릭→가까운 단지.
@@ -695,13 +509,7 @@ export default function KakaoMap() {
     data.complexes
       .filter((c) => c.lat != null)
       .forEach((c) => {
-        const hits = (c.trades || []).filter(
-          (t) =>
-            t.dealAmount >= pB.min &&
-            t.dealAmount < pB.max &&
-            t.area >= aB.min &&
-            t.area < aB.max
-        );
+        const hits = filterTrades(c.trades, aB, pB);
         const stat = summarize(hits);
         if (!stat) return;
 
@@ -710,8 +518,12 @@ export default function KakaoMap() {
         shownComplexes += 1;
         shownTrades += stat.count;
 
-        // 구매가능: 어떤 평형이든 보유자산으로 필요자금을 댈 수 있으면 true.
-        const buyable = affordMode ? isComplexBuyable(hits) : null;
+        // 구매가능: 어떤 평형이든 보유자산으로 필요자금을 댈 수 있으면(최대 여유 ≥ 0) true.
+        let buyable = null;
+        if (affordMode) {
+          const gap = bestGap(hits);
+          buyable = gap != null && gap >= 0;
+        }
         if (buyable) buyableCount += 1;
 
         const isFav = favs.has(favKey(data.lawdCd, c.umdNm, c.aptNm));
@@ -772,22 +584,10 @@ export default function KakaoMap() {
     const thisYear = new Date().getFullYear();
     const rows = [];
     for (const c of tradesData.complexes) {
-      const hits = (c.trades || []).filter(
-        (t) => t.dealAmount >= pB.min && t.dealAmount < pB.max && t.area >= aB.min && t.area < aB.max
-      );
+      const hits = filterTrades(c.trades, aB, pB);
       const stat = summarize(hits);
       if (!stat) continue;
-      let gap = null;
-      if (affordMode) {
-        for (const g of groupByPyeong(hits)) {
-          const gp = priceBasis === "recent" ? g.recentAmount : g.avg;
-          const ln = loanForPrice(gp);
-          if (ln && ln.maxLoan > 0) {
-            const d = assets - ln.requiredCash;
-            if (gap == null || d > gap) gap = d;
-          }
-        }
-      }
+      const gap = affordMode ? bestGap(hits) : null; // 마커 색칠과 같은 계산(bestGap) 공유
       const key = favKey(tradesData.lawdCd, c.umdNm, c.aptNm);
       const buildYear = Number(hits[0]?.buildYear) || null;
       rows.push({
@@ -1461,231 +1261,3 @@ export default function KakaoMap() {
     </div>
   );
 }
-
-const PANEL_SHADOW = "0 6px 24px rgba(15,23,42,0.14)";
-
-const controlPanel = {
-  position: "absolute", top: 14, left: 14, zIndex: 10,
-  background: "rgba(255,255,255,0.98)", padding: 14,
-  borderRadius: 14, boxShadow: PANEL_SHADOW, border: `1px solid ${C.border}`,
-  fontSize: 13, display: "flex", flexDirection: "column", gap: 9, width: 300,
-};
-const panelTitle = { fontSize: 13, fontWeight: 700, color: C.text, letterSpacing: "-0.01em" };
-const newsTabLink = {
-  fontSize: 11, fontWeight: 600, color: C.blue, textDecoration: "none",
-  padding: "2px 8px", background: C.blueSoft, borderRadius: 999,
-};
-const detailPanel = {
-  position: "absolute", top: 14, right: 14, bottom: 14, zIndex: 10, width: 320,
-  overflowY: "auto", background: "#fff", padding: "18px 20px",
-  borderRadius: 16, boxShadow: PANEL_SHADOW, border: `1px solid ${C.border}`,
-};
-// ⚠️ flex:1 금지 — 세로 flex 패널의 직계 자식이면 세로로 늘어남(시군구 칸 304px 사고).
-// 가로 행에서 폭을 나눌 땐 사용처에서 flex:1을 덧씌울 것.
-const selectStyle = {
-  width: "100%", padding: "8px 10px", borderRadius: 8,
-  border: `1px solid ${C.border}`, fontSize: 13, background: "#fff",
-  color: C.text, cursor: "pointer",
-};
-const pillBtn = {
-  flex: 1, padding: "8px 6px", borderRadius: 8,
-  borderWidth: 1, borderStyle: "solid", borderColor: C.border,
-  background: "#fff", color: C.sub, fontSize: 12, fontWeight: 600, cursor: "pointer",
-};
-const pillBtnOn = { background: C.blueSoft, borderColor: "#bfdbfe", color: C.blue };
-const statusText = { fontSize: 12, fontWeight: 600, color: C.text, lineHeight: 1.4 };
-const refreshBtn = {
-  flex: "0 0 auto", padding: "3px 8px", borderRadius: 7, border: `1px solid ${C.border}`,
-  background: "#fff", color: C.sub, fontSize: 11, fontWeight: 600, cursor: "pointer",
-};
-const hintLine = { fontSize: 11, color: C.muted };
-const hintText = { fontSize: 12, color: C.muted, padding: "8px 0" };
-const legendRow = { display: "flex", alignItems: "center", gap: 10, fontSize: 11, color: C.sub };
-const legendItem = { display: "inline-flex", alignItems: "center", gap: 4 };
-const legendDot = { width: 9, height: 9, borderRadius: "50%", display: "inline-block" };
-
-const drawer = {
-  marginTop: 2, borderTop: `1px solid ${C.divider}`, paddingTop: 10,
-  display: "flex", flexDirection: "column", gap: 7, fontSize: 12,
-};
-const drawerHead = { fontSize: 12, fontWeight: 700, color: C.text };
-const fieldRow = { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 };
-const fieldLabel = { color: C.sub, fontSize: 12 };
-const fieldInput = {
-  width: 116, padding: "6px 8px", borderRadius: 7, border: `1px solid ${C.border}`,
-  fontSize: 12, background: "#fff", color: C.text,
-};
-const favRow = {
-  fontSize: 12, color: C.text, padding: "6px 2px",
-  borderBottom: `1px solid ${C.divider}`,
-};
-// 즐겨찾기 D-day(임대차 만기·이벤트 메모) UI.
-const favEditBtn = {
-  flexShrink: 0, marginLeft: 6, fontSize: 11, padding: "0 6px", borderRadius: 6,
-  borderWidth: 1, borderStyle: "solid", borderColor: C.border,
-  background: "#fff", color: C.muted, cursor: "pointer",
-};
-const favDdayLine = {
-  display: "flex", gap: 10, flexWrap: "wrap", marginTop: 3,
-  fontSize: 11, fontWeight: 600, color: "#b45309",
-};
-const favEditBox = {
-  marginTop: 4, padding: "6px 8px", background: C.blueSoft,
-  borderWidth: 1, borderStyle: "solid", borderColor: "#dbeafe", borderRadius: 8,
-};
-const favSaveBtn = {
-  fontSize: 11, fontWeight: 700, padding: "3px 12px", borderRadius: 6,
-  borderWidth: 1, borderStyle: "solid", borderColor: C.blue,
-  background: C.blue, color: "#fff", cursor: "pointer",
-};
-
-// 단지 리스트 패널(네이버식) — 정렬 바 + 행 목록.
-const sortBar = {
-  display: "flex", alignItems: "center", gap: 8,
-  paddingTop: 9, borderTop: `1px solid ${C.divider}`,
-};
-const sortSelect = {
-  flex: "0 1 150px", padding: "5px 7px", borderRadius: 7,
-  border: `1px solid ${C.border}`, fontSize: 12, background: "#fff",
-  color: C.text, cursor: "pointer", fontWeight: 600,
-};
-const onlyBuyLabel = {
-  display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11,
-  color: C.sub, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap",
-};
-const listScroll = { flex: 1, minHeight: 0, overflowY: "auto", margin: "0 -6px", padding: "0 6px" };
-const rowTop = { display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 };
-const rowName = {
-  fontSize: 13, fontWeight: 700, color: C.text, whiteSpace: "nowrap",
-  overflow: "hidden", textOverflow: "ellipsis",
-};
-const rowPrice = {
-  fontSize: 13, fontWeight: 800, color: C.text, whiteSpace: "nowrap",
-  fontVariantNumeric: "tabular-nums",
-};
-const rowSub = { fontSize: 11, color: C.sub, marginTop: 2 };
-const rowBadges = { display: "flex", gap: 4, marginTop: 4, flexWrap: "wrap" };
-const badgeBase = {
-  fontSize: 10, fontWeight: 700, borderRadius: 5, padding: "2px 6px", whiteSpace: "nowrap",
-};
-const hotBadge = { ...badgeBase, color: "#b91c1c", background: "#fee2e2" };
-const upBadge = { ...badgeBase, color: "#b45309", background: "#fef9c3" };
-const downBadge = { ...badgeBase, color: "#1d4ed8", background: C.blueSoft };
-const rebuildBadge = { ...badgeBase, color: "#92400e", background: "#fef3c7" };
-const gapOkBadge = { ...badgeBase, color: "#047857", background: "#dcfce7" };
-const gapNoBadge = { ...badgeBase, color: "#be123c", background: "#ffe4e6" };
-// 선반영 게이지: 지역 중앙값 대비 초과상승. 크게 양수면 재료(재건축 등) 선반영↑ = 경고 톤.
-const excessBadge = { ...badgeBase, color: C.sub, background: C.divider };
-const excessHotBadge = { ...badgeBase, color: "#b45309", background: "#fef3c7" };
-const mobileListSheet = {
-  position: "absolute", left: 0, right: 0, bottom: 0, zIndex: 12,
-  maxHeight: "62vh", display: "flex", flexDirection: "column", gap: 8,
-  background: "#fff", borderRadius: "16px 16px 0 0",
-  padding: "14px 14px calc(16px + env(safe-area-inset-bottom))",
-  boxShadow: "0 -6px 24px rgba(15,23,42,0.18)",
-};
-
-const closeBtn = {
-  position: "absolute", top: 12, right: 14, border: "none", background: "none",
-  fontSize: 22, lineHeight: 1, cursor: "pointer", color: C.muted, zIndex: 1,
-};
-const starBtn = {
-  border: "none", background: "none", fontSize: 22, lineHeight: 1,
-  cursor: "pointer", color: C.amber, padding: 0,
-};
-
-const sectionLabel = { marginTop: 18, fontSize: 12, fontWeight: 700, color: C.text };
-const newsLink = {
-  display: "inline-block", marginTop: 7, fontSize: 12, fontWeight: 600,
-  color: C.blue, textDecoration: "none",
-};
-const naverLandLink = {
-  fontSize: 11, fontWeight: 600, color: C.blue, textDecoration: "none",
-  whiteSpace: "nowrap", cursor: "pointer",
-};
-
-// 갈아타기(보유 주택) UI. 토글쌍은 비shorthand border(pillBtn 규칙 — On이 borderColor만 덮음).
-const ownedBtn = {
-  fontSize: 11, fontWeight: 600, padding: "1px 8px", borderRadius: 999,
-  borderWidth: 1, borderStyle: "solid", borderColor: C.border,
-  background: "#fff", color: C.sub, cursor: "pointer", whiteSpace: "nowrap",
-};
-const ownedBtnOn = { borderColor: C.green, color: C.green, background: "#f0fdf4" };
-const ownedBox = {
-  marginTop: 2, marginBottom: 6, padding: "8px 10px", background: "#fffbeb",
-  borderWidth: 1, borderStyle: "solid", borderColor: "#fde68a", borderRadius: 8,
-};
-const ownedClearBtn = {
-  marginLeft: 6, fontSize: 10, padding: "0 6px", borderRadius: 6,
-  borderWidth: 1, borderStyle: "solid", borderColor: C.border,
-  background: "#fff", color: C.muted, cursor: "pointer", verticalAlign: "1px",
-};
-
-// 네이버 부동산(m.land) 단지 검색 딥링크. ⚠️ 국토부 단지명엔 "동편마을(3단지)"처럼 괄호가 흔한데,
-// 네이버는 검색어에 괄호가 들어가면 단지 매칭에 실패("검색결과가 없습니다")한다. 괄호 처리 2단계:
-// ① 괄호 안이 동·필지번호(숫자/영문/쉼표·하이픈뿐 or "제N(상가)동")면 **통째로 제거** — 네이버가
-//   모르는 토큰이라 넣으면 0건, 빼면 정확 매칭(2026-07-05 실측: 한미(A1,A2,B)·트윈팰리스(101동)·
-//   대아(제101상가동) 단지 페이지 복구. 삼성(931)류는 빼도 0건이지만 나빠지진 않음).
-// ② 한글이 든 괄호는 **공백으로 풀어 유지** — 단지 구분자라 빼면 오히려 0건(2026-06-30 실측:
-//   동편마을(3단지)·한가람(두산) 등은 내용 포함해야 정확 매칭). best-effort — 단지 고정 URL 비공개.
-function naverLandUrl(umdNm, aptNm) {
-  const cleaned = aptNm.replace(/\(([^)]*)\)/g, (_, inner) =>
-    /^[0-9A-Za-z.,\-\s]*$/.test(inner) || /^제?\d+(상가)?동$/.test(inner) ? " " : ` ${inner} `
-  );
-  const q = `${umdNm} ${cleaned}`.replace(/[()]/g, " ").replace(/\s+/g, " ").trim();
-  return `https://m.land.naver.com/search/result/${encodeURIComponent(q)}`;
-}
-
-const noticeBox = {
-  marginTop: 8, padding: "10px 12px", background: C.blueSoft,
-  border: `1px solid #dbeafe`, borderRadius: 10, fontSize: 12, color: C.sub, lineHeight: 1.5,
-};
-const pyeongCard = {
-  // pyeongCardOn이 borderColor만 덮어쓰므로 shorthand border 금지(React 혼용 경고)
-  padding: "10px 12px", borderWidth: 1, borderStyle: "solid", borderColor: C.border,
-  borderRadius: 10, background: "#fff",
-};
-const pyeongCardOn = {
-  borderColor: C.blue, background: C.blueSoft, boxShadow: `0 0 0 1px ${C.blue}`,
-};
-const loanRow = { marginTop: 8, paddingTop: 8, borderTop: `1px dashed ${C.border}` };
-
-const basisToggle = {
-  display: "inline-flex", border: `1px solid ${C.border}`, borderRadius: 7, overflow: "hidden",
-};
-const basisBtn = {
-  border: "none", background: "#fff", color: C.sub, fontSize: 11,
-  padding: "3px 9px", cursor: "pointer", fontWeight: 600,
-};
-const basisBtnOn = { background: C.blue, color: "#fff" };
-const helpBtn = {
-  width: 22, height: 22, borderRadius: "50%", border: `1px solid ${C.border}`,
-  background: "#fff", color: C.sub, fontSize: 12, fontWeight: 700, cursor: "pointer",
-  lineHeight: 1, padding: 0,
-};
-const bindingTag = {
-  marginLeft: 5, fontSize: 9, color: C.sub, background: "#e2e8f0",
-  borderRadius: 4, padding: "1px 5px", verticalAlign: "middle", fontWeight: 600,
-};
-const regBadge = {
-  fontSize: 10, color: "#b91c1c", background: "#fee2e2", borderRadius: 5, padding: "2px 7px", fontWeight: 600,
-};
-const nonRegBadge = {
-  fontSize: 10, color: "#15803d", background: "#dcfce7", borderRadius: 5, padding: "2px 7px", fontWeight: 600,
-};
-const linkBtn = {
-  border: "none", background: "none", color: C.blue, fontWeight: 700,
-  cursor: "pointer", padding: 0, fontSize: 12,
-};
-
-const modalOverlay = {
-  position: "fixed", inset: 0, zIndex: 50, background: "rgba(15,23,42,0.45)",
-  display: "flex", alignItems: "center", justifyContent: "center", padding: 20,
-};
-const modalCard = {
-  position: "relative", width: "100%", maxWidth: 380, maxHeight: "85vh", overflowY: "auto",
-  background: "#fff", borderRadius: 16, padding: "20px 22px", boxShadow: "0 12px 40px rgba(15,23,42,0.3)",
-};
-const helpBlock = { marginTop: 14 };
-const helpHead = { fontSize: 13, fontWeight: 700, color: C.blue, marginBottom: 4 };
-const helpBody = { fontSize: 12.5, color: C.text, lineHeight: 1.7 };
