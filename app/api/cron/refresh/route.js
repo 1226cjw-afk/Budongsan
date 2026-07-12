@@ -7,7 +7,8 @@
 //   - 미설정(로컬 등)이면 인증 없이 동작.
 
 import { fetchRawMonth, fetchRawMonths, monthsBack, currentYmd } from "../../../lib/trades";
-import { supabaseAdmin } from "../../../lib/supabaseServer";
+import { cronUnauthorized } from "../../../lib/cronAuth";
+import { supabaseAdmin, noDbResponse } from "../../../lib/supabaseServer";
 
 const REFRESH_MONTHS = 2; // 이번달 + 지난달(지연 신고 반영). 과거달은 거의 안 변함.
 const TREND_WINDOW = 36; // 추세 3년 창 — 미캐시 달을 미리 채워 첫 3년 조회를 빠르게(과거달은 영구 캐시)
@@ -16,16 +17,9 @@ const WARM_DEADLINE_MS = 40_000; // 워밍은 이 시간 넘으면 중단(함수
 export const maxDuration = 60; // Vercel 함수 최대 실행(초) — 첫 워밍(지역당 ~34달 수집) 대비
 
 export async function GET(request) {
-  const secret = process.env.CRON_SECRET;
-  if (secret) {
-    const auth = request.headers.get("authorization");
-    if (auth !== `Bearer ${secret}`) {
-      return Response.json({ error: "unauthorized" }, { status: 401 });
-    }
-  }
-  if (!supabaseAdmin) {
-    return Response.json({ error: "Supabase 미설정" }, { status: 500 });
-  }
+  const denied = cronUnauthorized(request);
+  if (denied) return denied;
+  if (!supabaseAdmin) return noDbResponse();
 
   const started = Date.now();
 

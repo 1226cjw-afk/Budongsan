@@ -14,3 +14,8 @@ export const supabaseAdmin =
         auth: { persistSession: false, autoRefreshToken: false },
       })
     : null;
+
+// DB가 필수인 라우트의 supabaseAdmin 부재 응답(공용).
+export function noDbResponse() {
+  return Response.json({ error: "Supabase 미설정" }, { status: 500 });
+}

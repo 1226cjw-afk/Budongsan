@@ -2,12 +2,10 @@
 // (최신 limit건 전체를 내려주면 칩 필터에 재요청 불필요 — /api/trades와 같은 방침).
 
 import { isCapitalAreaNews } from "../../lib/news";
-import { supabaseAdmin } from "../../lib/supabaseServer";
+import { supabaseAdmin, noDbResponse } from "../../lib/supabaseServer";
 
 export async function GET(request) {
-  if (!supabaseAdmin) {
-    return Response.json({ error: "Supabase 미설정" }, { status: 500 });
-  }
+  if (!supabaseAdmin) return noDbResponse();
   const { searchParams } = new URL(request.url);
   const limit = Math.min(Number(searchParams.get("limit")) || 300, 1000);
 

@@ -5,23 +5,17 @@
 // 인증: CRON_SECRET 설정 시 `Authorization: Bearer <CRON_SECRET>` 필요(refresh와 동일).
 
 import { fetchNews, newsKeywords, newsSource } from "../../../lib/news";
-import { supabaseAdmin } from "../../../lib/supabaseServer";
+import { cronUnauthorized } from "../../../lib/cronAuth";
+import { supabaseAdmin, noDbResponse } from "../../../lib/supabaseServer";
 
 const KEEP_DAYS = 30; // 수집일 기준 보관 기간
 
 export const maxDuration = 60;
 
 export async function GET(request) {
-  const secret = process.env.CRON_SECRET;
-  if (secret) {
-    const auth = request.headers.get("authorization");
-    if (auth !== `Bearer ${secret}`) {
-      return Response.json({ error: "unauthorized" }, { status: 401 });
-    }
-  }
-  if (!supabaseAdmin) {
-    return Response.json({ error: "Supabase 미설정" }, { status: 500 });
-  }
+  const denied = cronUnauthorized(request);
+  if (denied) return denied;
+  if (!supabaseAdmin) return noDbResponse();
 
   const started = Date.now();
 

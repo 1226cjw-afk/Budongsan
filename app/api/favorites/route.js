@@ -1,17 +1,13 @@
 // 즐겨찾기 CRUD. 로그인 없는 개인용 → 단일 공용 목록(서버 secret 키로 접근).
 // GET: 목록 / POST: 추가(upsert) / PATCH: D-day 필드 갱신(id) / DELETE: 삭제(?lawdCd&umdNm&aptNm).
 
-import { supabaseAdmin } from "../../lib/supabaseServer";
-
-function noDb() {
-  return Response.json({ error: "Supabase 미설정" }, { status: 500 });
-}
+import { supabaseAdmin, noDbResponse } from "../../lib/supabaseServer";
 
 const BASE_COLS = "id, lawd_cd, umd_nm, apt_nm, lat, lng, created_at";
 const DDAY_COLS = ", lease_end, note, note_date"; // 0004 마이그레이션 컬럼
 
 export async function GET() {
-  if (!supabaseAdmin) return noDb();
+  if (!supabaseAdmin) return noDbResponse();
   let { data, error } = await supabaseAdmin
     .from("favorites")
     .select(BASE_COLS + DDAY_COLS)
@@ -29,7 +25,7 @@ export async function GET() {
 
 // D-day 필드 갱신. body: { id, leaseEnd?, note?, noteDate? } — null/""로 지우기 가능.
 export async function PATCH(request) {
-  if (!supabaseAdmin) return noDb();
+  if (!supabaseAdmin) return noDbResponse();
   const body = await request.json().catch(() => ({}));
   if (!body.id) return Response.json({ error: "id 필요" }, { status: 400 });
   const patch = {
@@ -49,7 +45,7 @@ export async function PATCH(request) {
 }
 
 export async function POST(request) {
-  if (!supabaseAdmin) return noDb();
+  if (!supabaseAdmin) return noDbResponse();
   const body = await request.json().catch(() => ({}));
   const { lawdCd, umdNm, aptNm, lat, lng } = body;
   if (!lawdCd || !umdNm || !aptNm) {
@@ -68,7 +64,7 @@ export async function POST(request) {
 }
 
 export async function DELETE(request) {
-  if (!supabaseAdmin) return noDb();
+  if (!supabaseAdmin) return noDbResponse();
   const { searchParams } = new URL(request.url);
   const lawdCd = searchParams.get("lawdCd");
   const umdNm = searchParams.get("umdNm");
