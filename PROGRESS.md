@@ -7,7 +7,9 @@
 - ✅ **0003 kapt_cache 마이그레이션 실행 완료(2026-07-05, 사용자가 SQL Editor에서)** —
   prod e2e 검증: 페이지 로드 → 리스트 POST 일괄 → 국토부 → upsert, 17행 영구 저장·재호출 6.0s→0.95s.
   (MCP `--read-only`라 DDL 불가, PAT 우회는 권한 정책상 거부 → DDL은 SQL Editor 경로가 유일.)
-- 최신 작업: 2026-07-12 — **전체 리팩토링**(아래 섹션) — KakaoMap 1691→1263줄(스타일·헬퍼·
+- 최신 작업: 2026-07-15 — **UI 최신 디자인 리프레시**(아래 섹션) — Pretendard 폰트 + 글래스
+  패널 + 마이크로 인터랙션(`98cb981`). 기능·레이아웃 불변, prod 배포·검증 완료.
+- 그 전: 2026-07-12 — **전체 리팩토링**(아래 섹션) — KakaoMap 1691→1263줄(스타일·헬퍼·
   서브컴포넌트 8개 모듈 분리 + bestGap/filterTrades 공용화) + cron 인증·noDb 응답 헬퍼. 동작 불변
   (Playwright 13항목 ALL PASS). 같은 날 **뉴스 탭 수도권·매매 위주 개편**(아래 섹션) — 기본 키워드
   8종 재편 + 수도권 필터(수집·조회 양쪽 적용) + 카테고리 칩 7종·⭐관심지역 칩(제목 룰 분류).
@@ -33,6 +35,26 @@
 남은 후보: **갈아타기 백로그 5종 전부 당일 구현 완료(2026-07-05, 아래 섹션)**.
 - ✅ 0004 마이그레이션도 실행 완료(사용자, SQL Editor) — prod에서 PATCH 저장→조회→원복
   왕복 검증 통과. 잔여 백로그 없음.
+
+## ✅ UI 최신 디자인 리프레시 (2026-07-15)
+"화면을 최신 스타일로" 요청 — 시맨틱 컬러(초록=가능/빨강=부족/앰버=★)·레이아웃·기능 전부 불변,
+표현 계층만 현대화. ui-ux-pro-max 스킬 DB 참조(Real Estate = Glassmorphism + Minimalism·Trust Blue.
+단, 이 머신 Python 스텁이라 search.py 대신 스킬 data/*.csv를 직접 grep).
+- **타이포**: 폰트 미지정(브라우저 기본)이었음 → `app/globals.css` 신설 + layout.js에서
+  Pretendard Variable CDN(동적 서브셋, 폴백 스택). 안티앨리어싱·`:focus-visible` 링·
+  thin 스크롤바·`prefers-reduced-motion` 전역 대응. 폼 컨트롤 `font-family: inherit` 필수.
+- **팔레트 토큰 추가**(`lib/palette.js`): `GLASS`(반투명+backdrop blur 스프레드)·`GLASS_BORDER`·
+  `CARD_SHADOW`·`TRANSITION`(150ms 공통) + `PANEL_SHADOW` 레이어드 소프트 섀도로 교체.
+- **패널 글래스모피즘**: 컨트롤/세부(0.94)/모바일시트(0.96) — 라운딩 14~16→18/20, 모달 오버레이
+  blur(4px). 기준가·1/3년 토글은 iOS식 세그먼트(회색 트랙+활성 흰 카드; basisBtn은 트랙 밖
+  단독 사용도 있어 On에 링 섀도 포함).
+- **핀 현대화 + 기존 버그 수정**: 알약형(radius 999)+흰 링+호버 리프트(-2px).
+  ⚠️ 기존 CSS에서 공통 `.trade-pin:hover`(파랑)가 **변형별 hover보다 뒤에 있어 같은 특이도로
+  덮어씀** → ok/no/fav 핀이 호버 시 파랗게 변하던 버그, 공통 hover를 앞으로 이동해 수정.
+  `--away`는 흰 링이 기본이 되면서 구분 상실 → **점선 outline**으로 (CLAUDE.md "점선링" 서술과 일치).
+- **뉴스 페이지**: 카드 `CARD_SHADOW` 공용화, 행 호버 피드백(.news-row), 배경 그라디언트.
+- 검증: `next build` 통과 + Playwright 스크린샷 7장(데스크톱/모바일/세부패널/뉴스, 자금 프로필
+  선주입 색칠 포함) + `document.fonts.check`로 Pretendard 로드 확인 + prod HTML에 폰트 링크 확인.
 
 ## ✅ 전체 리팩토링 — KakaoMap 모듈 분리 + 서버 헬퍼 공용화 (2026-07-12)
 동작 불변 리팩토링. 서버(lib·API)는 원래 깔끔해서 소소한 중복만, 본체는 KakaoMap.js 분리.
