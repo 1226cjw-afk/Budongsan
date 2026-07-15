@@ -1,0 +1,67 @@
+/* 전역 베이스 — 색 값은 lib/palette.js(C)와 동일 팔레트(slate 계열)를 미러링. */
+
+:root {
+  color-scheme: light;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  /* Pretendard Variable은 layout.js에서 CDN 로드(font-display: swap) — 실패 시 시스템 폰트 폴백 */
+  font-family: "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont,
+    system-ui, "Segoe UI", "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  color: #0f172a;
+  background: #f8fafc;
+}
+
+/* 폼 컨트롤은 기본적으로 body 폰트를 상속하지 않음 */
+button,
+input,
+select,
+textarea {
+  font-family: inherit;
+}
+
+/* 키보드 포커스 링(마우스 클릭에는 안 뜸) */
+:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
+}
+
+/* 모던 스크롤바(패널 내부 리스트 등) */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #cbd5e1 transparent;
+}
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* 접근성: 사용자 감속 설정 존중 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

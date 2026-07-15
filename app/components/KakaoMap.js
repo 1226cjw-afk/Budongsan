@@ -779,9 +779,9 @@ export default function KakaoMap() {
     ? {
         ...detailPanel,
         top: "auto", left: 0, right: 0, bottom: 0, width: "auto",
-        maxHeight: "60vh", borderRadius: "16px 16px 0 0",
+        maxHeight: "60vh", borderRadius: "20px 20px 0 0",
         padding: "16px 16px calc(18px + env(safe-area-inset-bottom))",
-        boxShadow: "0 -6px 24px rgba(15,23,42,0.18)",
+        boxShadow: "0 -1px 2px rgba(15,23,42,0.04), 0 -8px 32px rgba(15,23,42,0.16)",
       }
     : detailPanel;
 
@@ -1233,25 +1233,35 @@ export default function KakaoMap() {
       <style>{`
         .trade-pin {
           display: flex; flex-direction: column; align-items: center;
-          background: #2563eb; color: #fff; padding: 4px 9px;
-          border-radius: 13px; font-size: 11px; white-space: nowrap;
-          box-shadow: 0 2px 6px rgba(15,23,42,0.25); cursor: pointer;
-          transform: translateX(-50%); transition: background 0.12s;
+          background: #2563eb; color: #fff; padding: 4px 10px;
+          border-radius: 999px; font-size: 11px; white-space: nowrap;
+          box-shadow: 0 1px 2px rgba(15,23,42,0.16), 0 4px 12px rgba(15,23,42,0.22),
+            0 0 0 1.5px rgba(255,255,255,0.9);
+          cursor: pointer; transform: translateX(-50%);
+          transition: background 0.15s, transform 0.15s, box-shadow 0.15s;
+        }
+        /* 공통 hover는 변형별 hover보다 먼저 — 같은 특이도라 뒤에 두면 색칠 핀 hover색을 덮음 */
+        .trade-pin:hover {
+          background: #1d4ed8;
+          transform: translateX(-50%) translateY(-2px);
+          box-shadow: 0 2px 4px rgba(15,23,42,0.16), 0 8px 20px rgba(15,23,42,0.28),
+            0 0 0 1.5px rgba(255,255,255,0.95);
         }
         .trade-pin--fav { background: #f59e0b; }
         .trade-pin--fav:hover { background: #d97706; }
-        .trade-pin--away { opacity: 0.9; box-shadow: 0 2px 6px rgba(15,23,42,0.25), 0 0 0 1.5px rgba(255,255,255,0.85); }
+        .trade-pin--away { opacity: 0.92;
+          outline: 2px dashed rgba(255,255,255,0.95); outline-offset: 1px; }
         .trade-pin--ok { background: #059669; }
         .trade-pin--ok:hover { background: #047857; }
         .trade-pin--no { background: #dc2626; }
         .trade-pin--no:hover { background: #b91c1c; }
-        .trade-pin b { font-size: 12px; font-weight: 700; }
+        .trade-pin b { font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums; }
         .trade-pin span { font-size: 9px; opacity: 0.85; max-width: 92px;
           overflow: hidden; text-overflow: ellipsis; }
-        .trade-pin:hover { background: #1d4ed8; }
         .cx-row { padding: 9px 8px 9px 10px; border-bottom: 1px solid ${C.divider};
           border-left: 3px solid transparent; cursor: pointer;
-          transition: background 0.12s, border-color 0.12s;
+          border-radius: 0 10px 10px 0;
+          transition: background 0.15s, border-color 0.15s;
           animation: cxIn 0.28s ease both; }
         .cx-row:hover { background: #f8fafc; }
         .cx-row--on { background: ${C.blueSoft}; border-left-color: ${C.blue}; }

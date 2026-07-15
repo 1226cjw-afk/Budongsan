@@ -7,7 +7,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { classifyNews, NEWS_CATEGORIES } from "../lib/news";
-import { C } from "../lib/palette";
+import { C, CARD_SHADOW, TRANSITION } from "../lib/palette";
 
 const CAT_EMOJI = {
   "매매·시세": "📈", "정책·세금": "🏛️", "대출·금리": "💰",
@@ -155,6 +155,7 @@ export default function NewsPage() {
                     href={it.link}
                     target="_blank"
                     rel="noreferrer"
+                    className="news-row"
                     style={{ ...row, ...(i > 0 ? rowDivider : null) }}
                   >
                     <div style={rowTitle}>{it.title}</div>
@@ -174,23 +175,27 @@ export default function NewsPage() {
           ))
         )}
       </div>
+      <style>{`.news-row { transition: background 0.15s; }
+        .news-row:hover { background: #f8fafc; }`}</style>
     </div>
   );
 }
 
 const page = {
-  minHeight: "100vh", background: "#f8fafc", color: C.text,
+  minHeight: "100vh", background: "linear-gradient(180deg, #f8fafc 0%, #eef2f7 100%)", color: C.text,
   padding: "18px 14px calc(24px + env(safe-area-inset-bottom))",
 };
 const column = { maxWidth: 640, margin: "0 auto", display: "flex", flexDirection: "column", gap: 10 };
 const headerRow = { display: "flex", alignItems: "center", justifyContent: "space-between" };
 const backLink = {
   fontSize: 13, fontWeight: 600, color: C.sub, textDecoration: "none",
-  padding: "6px 10px", background: "#fff", borderRadius: 8, border: `1px solid ${C.border}`,
+  padding: "6px 10px", background: "#fff", borderRadius: 10, border: `1px solid ${C.border}`,
+  boxShadow: "0 1px 2px rgba(15,23,42,0.04)", transition: TRANSITION,
 };
 const collectBtn = {
-  padding: "6px 10px", borderRadius: 8, border: `1px solid ${C.border}`,
+  padding: "6px 10px", borderRadius: 10, border: `1px solid ${C.border}`,
   background: "#fff", color: C.sub, fontSize: 12, fontWeight: 600, cursor: "pointer",
+  boxShadow: "0 1px 2px rgba(15,23,42,0.04)", transition: TRANSITION,
 };
 const title = { margin: "4px 0 0", fontSize: 22, fontWeight: 800, letterSpacing: "-0.02em" };
 const subtitle = { fontSize: 12, color: C.muted };
@@ -203,13 +208,13 @@ const chip = {
   flex: "0 0 auto", padding: "6px 11px", borderRadius: 999,
   borderWidth: 1, borderStyle: "solid", borderColor: C.border,
   background: "#fff", color: C.sub, fontSize: 12, fontWeight: 600, cursor: "pointer",
-  whiteSpace: "nowrap",
+  whiteSpace: "nowrap", transition: TRANSITION,
 };
 const chipOn = { background: C.blueSoft, borderColor: "#bfdbfe", color: C.blue };
 const dayHead = { fontSize: 12, fontWeight: 700, color: C.sub, margin: "10px 2px 6px" };
 const card = {
-  background: "#fff", borderRadius: 14, border: `1px solid ${C.border}`,
-  boxShadow: "0 2px 10px rgba(15,23,42,0.05)", overflow: "hidden",
+  background: "#fff", borderRadius: 16, border: `1px solid ${C.border}`,
+  boxShadow: CARD_SHADOW, overflow: "hidden",
 };
 const row = { display: "block", padding: "12px 16px", textDecoration: "none", color: "inherit" };
 const rowDivider = { borderTop: `1px solid ${C.divider}` };
@@ -223,6 +228,7 @@ const metaKw = {
   padding: "1px 7px", borderRadius: 999, background: C.divider, color: C.sub, fontWeight: 600,
 };
 const emptyBox = {
-  background: "#fff", borderRadius: 14, border: `1px solid ${C.border}`,
+  background: "#fff", borderRadius: 16, border: `1px solid ${C.border}`,
+  boxShadow: CARD_SHADOW,
   padding: "36px 16px", textAlign: "center", fontSize: 13, color: C.sub, lineHeight: 1.7,
 };
