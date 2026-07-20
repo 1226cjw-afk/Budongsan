@@ -87,7 +87,7 @@ async function fetchMonthFromApi(lawdCd, ymd) {
     `${RTMS_ENDPOINT}?serviceKey=${encodeURIComponent(dataKey)}` +
     `&LAWD_CD=${lawdCd}&DEAL_YMD=${ymd}&numOfRows=1000&pageNo=1`;
   const res = await fetch(url, {
-    headers: { "User-Agent": "RealEstate_Map/0.1" },
+    headers: { "User-Agent": "Budongsan/0.1" },
     cache: "no-store",
   });
   const xml = await res.text();

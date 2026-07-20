@@ -33,7 +33,7 @@ function asArray(items) {
 
 async function fetchJson(url) {
   const res = await fetch(url, {
-    headers: { "User-Agent": "RealEstate_Map/0.1" },
+    headers: { "User-Agent": "Budongsan/0.1" },
     cache: "no-store",
   });
   const text = await res.text();
