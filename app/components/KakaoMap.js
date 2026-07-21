@@ -628,23 +628,29 @@ export default function KakaoMap() {
     targets.forEach((r) => infoInflightRef.current.add(r.key));
     let alive = true;
     (async () => {
-      const res = await fetch("/api/complex-info", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          lawdCd,
-          items: targets.map((r) => ({ umdNm: r.c.umdNm, aptNm: r.c.aptNm })),
-        }),
-      })
-        .then((x) => x.json())
-        .catch(() => null);
-      if (!alive) return;
-      const infos = res?.infos || [];
-      setHouseholdMap((prev) => {
-        const m = new Map(prev);
-        targets.forEach((r, j) => m.set(r.key, infos[j]?.households ?? null));
-        return m;
-      });
+      try {
+        const res = await fetch("/api/complex-info", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            lawdCd,
+            items: targets.map((r) => ({ umdNm: r.c.umdNm, aptNm: r.c.aptNm })),
+          }),
+        })
+          .then((x) => x.json())
+          .catch(() => null);
+        if (!alive) return;
+        const infos = res?.infos || [];
+        setHouseholdMap((prev) => {
+          const m = new Map(prev);
+          targets.forEach((r, j) => m.set(r.key, infos[j]?.households ?? null));
+          return m;
+        });
+      } finally {
+        // 요청이 끝나면(성공/중단 무관) inflight에서 해제. 중단(alive=false) 시에도 해제해야
+        // 키가 남아 세대수를 영영 못 부르는 걸 막는다 — rank 도착 등으로 listRows가 자주 바뀜.
+        targets.forEach((r) => infoInflightRef.current.delete(r.key));
+      }
     })();
     return () => {
       alive = false;

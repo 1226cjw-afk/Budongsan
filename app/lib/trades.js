@@ -104,9 +104,11 @@ async function fetchMonthFromApi(lawdCd, ymd) {
 const RTMS_CONCURRENCY = 36;
 
 // 여러 달 원본 거래를 한 번에 → 캐시 1회 일괄 조회, 미스만 제한 병렬 수집 + 배치 저장.
-// 반환: { byYmd: Map(ymd → trades[]), fetchedYmds: 국토부에서 새로 받은 달들 }
+// 반환: { byYmd: Map(ymd → trades[]), fetchedYmds: 국토부에서 새로 받은 달들,
+//         latestFetched: 가장 최근 fetched_at(ISO)|null — 신선도 표시용, 추가 조회 없이 산출 }
 export async function fetchRawMonths(lawdCd, ymds, { refresh = false } = {}) {
   const byYmd = new Map();
+  let latestFetched = null; // 캐시 신선도(가장 최근 fetched_at) — 별도 조회 없이 여기서 산출.
 
   if (supabaseAdmin && !refresh) {
     const { data } = await supabaseAdmin
@@ -117,56 +119,55 @@ export async function fetchRawMonths(lawdCd, ymds, { refresh = false } = {}) {
     for (const row of data || []) {
       const ageMs = Date.now() - new Date(row.fetched_at).getTime();
       const stale = isCurrentMonth(row.deal_ymd) && ageMs > CURRENT_MONTH_TTL_MS;
-      if (!stale) byYmd.set(row.deal_ymd, row.trades);
+      if (!stale) {
+        byYmd.set(row.deal_ymd, row.trades);
+        if (!latestFetched || row.fetched_at > latestFetched) latestFetched = row.fetched_at;
+      }
     }
   }
 
   const misses = ymds.filter((ymd) => !byYmd.has(ymd));
   const fetchedYmds = [];
+  let firstError = null;
   for (let i = 0; i < misses.length; i += RTMS_CONCURRENCY) {
     const batch = misses.slice(i, i + RTMS_CONCURRENCY);
-    const perMonth = await Promise.all(
+    // 한 달이 실패해도 나머지 달은 살린다 — Promise.all은 한 달만 터져도 전량 실패(502)라
+    // 일시적 국토부 오류가 전체 응답을 죽였다. 성공분만 반영하고, 전량 실패일 때만 던진다.
+    const settled = await Promise.allSettled(
       batch.map((ymd) => fetchMonthFromApi(lawdCd, ymd))
     );
     const now = new Date().toISOString();
+    const okRows = [];
     batch.forEach((ymd, j) => {
-      byYmd.set(ymd, perMonth[j]);
-      fetchedYmds.push(ymd);
+      const r = settled[j];
+      if (r.status === "fulfilled") {
+        byYmd.set(ymd, r.value);
+        fetchedYmds.push(ymd);
+        okRows.push({ lawd_cd: lawdCd, deal_ymd: ymd, trades: r.value, fetched_at: now });
+      } else if (!firstError) {
+        firstError = r.reason;
+      }
     });
-    if (supabaseAdmin) {
-      const { error } = await supabaseAdmin.from("trade_raw_cache").upsert(
-        batch.map((ymd, j) => ({
-          lawd_cd: lawdCd,
-          deal_ymd: ymd,
-          trades: perMonth[j],
-          fetched_at: now,
-        })),
-        { onConflict: "lawd_cd,deal_ymd" }
-      );
-      if (error) console.error("[trade_raw_cache] batch upsert:", error.message);
+    if (okRows.length) {
+      latestFetched = now; // 방금 받은 게 가장 신선.
+      if (supabaseAdmin) {
+        const { error } = await supabaseAdmin
+          .from("trade_raw_cache")
+          .upsert(okRows, { onConflict: "lawd_cd,deal_ymd" });
+        if (error) console.error("[trade_raw_cache] batch upsert:", error.message);
+      }
     }
   }
-  return { byYmd, fetchedYmds };
+  // 성공한 달이 하나도 없는데 미스가 있었다면 원인 에러를 그대로 올린다(키 누락·국토부 장애 노출).
+  if (!byYmd.size && misses.length && firstError) throw firstError;
+
+  return { byYmd, fetchedYmds, latestFetched };
 }
 
 // 한 달 원본 거래(<12억) 반환. trade_raw_cache 사용(이번달 12h TTL).
 export async function fetchRawMonth(lawdCd, ymd, opts) {
   const { byYmd } = await fetchRawMonths(lawdCd, [ymd], opts);
   return byYmd.get(ymd);
-}
-
-// 주어진 달들 중 캐시에 저장된 가장 최근 갱신 시각(ISO). 데이터 신선도 표시용.
-export async function latestFetchedAt(lawdCd, ymds) {
-  if (!supabaseAdmin) return null;
-  const { data } = await supabaseAdmin
-    .from("trade_raw_cache")
-    .select("fetched_at")
-    .eq("lawd_cd", lawdCd)
-    .in("deal_ymd", ymds)
-    .order("fetched_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  return data?.fetched_at ?? null;
 }
 
 const GEOCODE_CONCURRENCY = 8; // 미캐시 단지 동시 지오코딩 수

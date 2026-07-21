@@ -26,7 +26,8 @@ export default function TrendChart({ series, areaLabel }) {
   const dense = n > 16; // 3년(36개월) 등 점이 많으면 마커 숨기고 축 라벨에 중간점 추가
   const x = (i) => AX + (i * plotW) / (n - 1);
   const y = (v) => PADTOP + (1 - (v - min) / span) * plotH;
-  const line = pts.map((p) => `${x(series.indexOf(p))},${y(p.avg)}`).join(" ");
+  const idxOf = new Map(series.map((s, i) => [s, i])); // 점 위치는 전체 series 인덱스 기준(결측월=가로 점프). indexOf O(n²) 회피.
+  const line = pts.map((p) => `${x(idxOf.get(p))},${y(p.avg)}`).join(" ");
   const first = pts[0];
   const last = pts[pts.length - 1];
   const mid = pts[Math.floor(pts.length / 2)];
@@ -47,7 +48,7 @@ export default function TrendChart({ series, areaLabel }) {
         ))}
         <polyline points={line} fill="none" stroke={stroke} strokeWidth="2" />
         {!dense && pts.map((p) => (
-          <circle key={p.ymd} cx={x(series.indexOf(p))} cy={y(p.avg)} r="2.5" fill={stroke} />
+          <circle key={p.ymd} cx={x(idxOf.get(p))} cy={y(p.avg)} r="2.5" fill={stroke} />
         ))}
       </svg>
       <div
