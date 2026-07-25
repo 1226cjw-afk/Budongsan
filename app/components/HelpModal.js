@@ -34,8 +34,31 @@ export default function HelpModal({ onClose }) {
         <div style={helpBlock}>
           <div style={helpHead}>최종 한도</div>
           <div style={helpBody}>
-            <b>LTV·DSR 중 더 작은 값</b>이 실제 대출 가능액이에요.<br />
-            필요 자기자금 = 집값 − 대출 가능액.
+            <b>LTV·DSR 중 더 작은 값</b>이 실제 대출 가능액이에요.
+          </div>
+        </div>
+
+        <div style={helpBlock}>
+          <div style={helpHead}>필요자금에 뭐가 들어가나요?</div>
+          <div style={helpBody}>
+            집값에서 대출을 뺀 금액에 <b>취득세·지방교육세·농어촌특별세(85㎡ 초과)
+            ·중개보수·등기비</b>를 더한 값이에요. 평형 카드의 &ldquo;부대비용 내역&rdquo;을
+            누르면 항목별로 볼 수 있어요.<br />
+            <span style={{ color: C.sub }}>
+              등기·채권비는 채권 시세에 따라 변해 근사치예요.
+            </span>
+          </div>
+        </div>
+
+        <div style={helpBlock}>
+          <div style={helpHead}>월 상환액과 DSR%가 왜 다른가요?</div>
+          <div style={helpBody}>
+            <b>월 상환액</b>은 실제 대출금리로 계산한, 매달 실제로 나가는 돈이에요.<br />
+            <b>DSR%</b>는 은행 심사 기준이라 실제 금리에 <b>스트레스 금리</b>
+            (규제지역 +3.0%p)를 더해 계산해요.<br />
+            <span style={{ color: C.sub }}>
+              같은 대출인데 DSR 쪽 숫자가 더 크게 나오는 게 정상이고, 한도는 이 기준으로 잘려요.
+            </span>
           </div>
         </div>
 

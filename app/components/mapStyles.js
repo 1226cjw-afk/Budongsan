@@ -5,8 +5,12 @@
 
 import { C, PANEL_SHADOW, GLASS, GLASS_BORDER, TRANSITION } from "../lib/palette";
 
+// 레이어 순서 — 모바일에서 패널이 겹치던 원인이 z-index 중복(전부 10)이었다.
+// 새 오버레이를 추가할 땐 반드시 여기에 등록할 것.
+export const Z = { MAP: 0, TOPBAR: 20, BACKDROP: 30, SHEET: 31, MODAL: 50 };
+
 export const controlPanel = {
-  position: "absolute", top: 14, left: 14, zIndex: 10,
+  position: "absolute", top: 14, left: 14, zIndex: Z.TOPBAR,
   ...GLASS, padding: 14,
   borderRadius: 18, boxShadow: PANEL_SHADOW, border: GLASS_BORDER,
   fontSize: 13, display: "flex", flexDirection: "column", gap: 9, width: 300,
@@ -16,8 +20,13 @@ export const newsTabLink = {
   fontSize: 11, fontWeight: 600, color: C.blue, textDecoration: "none",
   padding: "3px 9px", background: C.blueSoft, borderRadius: 999, transition: TRANSITION,
 };
+// 브리핑 미확인 개수 — 뉴스 링크에 붙는다.
+export const newsBadge = {
+  marginLeft: 4, padding: "0 5px", borderRadius: 999,
+  background: C.blue, color: "#fff", fontSize: 10, fontWeight: 700,
+};
 export const detailPanel = {
-  position: "absolute", top: 14, right: 14, bottom: 14, zIndex: 10, width: 320,
+  position: "absolute", top: 14, right: 14, bottom: 14, zIndex: Z.TOPBAR, width: 320,
   overflowY: "auto", ...GLASS, background: "rgba(255,255,255,0.94)", padding: "18px 20px",
   borderRadius: 20, boxShadow: PANEL_SHADOW, border: GLASS_BORDER,
 };
@@ -120,12 +129,49 @@ export const gapNoBadge = { ...badgeBase, color: "#be123c", background: "#ffe4e6
 // 선반영 게이지: 지역 중앙값 대비 초과상승. 크게 양수면 재료(재건축 등) 선반영↑ = 경고 톤.
 export const excessBadge = { ...badgeBase, color: C.sub, background: C.divider };
 export const excessHotBadge = { ...badgeBase, color: "#b45309", background: "#fef3c7" };
-export const mobileListSheet = {
-  position: "absolute", left: 0, right: 0, bottom: 0, zIndex: 12,
-  maxHeight: "62vh", display: "flex", flexDirection: "column", gap: 8,
-  ...GLASS, background: "rgba(255,255,255,0.96)", borderRadius: "20px 20px 0 0",
-  padding: "14px 14px calc(16px + env(safe-area-inset-bottom))",
+// ── 모바일 셸 ────────────────────────────────────────────────
+// 상단은 높이가 고정된 1줄 바, 나머지는 전부 하단 시트 하나.
+// 시트는 한 번에 하나만 열리므로 겹침이 구조적으로 불가능하다.
+export const mobileTopBar = {
+  position: "absolute", top: 8, left: 8, right: 8, zIndex: Z.TOPBAR,
+  ...GLASS, borderRadius: 14, border: GLASS_BORDER, boxShadow: PANEL_SHADOW,
+  padding: "8px 10px", display: "flex", alignItems: "center", gap: 8,
+};
+// ⚠️ 1줄 고정 — status 전문(필터 태그·구매가능 수)은 길어서 안 들어간다.
+// 짧은 요약만 넣고 ellipsis로 잠근다. 전문은 ⚙️ 시트 안에 그대로 있다.
+export const mobileTopText = {
+  flex: 1, minWidth: 0, fontSize: 12.5, fontWeight: 700, color: C.text,
+  whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+};
+export const mobileTopBtn = {
+  flex: "0 0 auto", position: "relative", padding: "5px 9px", borderRadius: 9,
+  borderWidth: 1, borderStyle: "solid", borderColor: C.border,
+  background: "#fff", color: C.sub, fontSize: 13, cursor: "pointer",
+  lineHeight: 1, textDecoration: "none", transition: TRANSITION,
+};
+// 필터가 걸려 있음을 1줄에서도 알리는 점.
+export const mobileTopBtnDot = {
+  position: "absolute", top: 2, right: 2, width: 6, height: 6,
+  borderRadius: "50%", background: C.blue,
+};
+export const sheetBackdrop = {
+  position: "absolute", inset: 0, zIndex: Z.BACKDROP,
+  background: "rgba(15,23,42,0.28)",
+};
+export const mobileSheet = {
+  position: "absolute", left: 0, right: 0, bottom: 0, zIndex: Z.SHEET,
+  // ⚠️ boxSizing 필수 — globals.css에 border-box 전역 리셋이 없어서 기본값이 content-box다.
+  // 없으면 maxHeight가 패딩(상10+하16=26px)을 제외해 시트가 70vh를 26px 넘긴다(2026-07-25 실측).
+  boxSizing: "border-box",
+  maxHeight: "70vh", display: "flex", flexDirection: "column", gap: 8,
+  ...GLASS, background: "rgba(255,255,255,0.97)", borderRadius: "20px 20px 0 0",
+  padding: "10px 14px calc(16px + env(safe-area-inset-bottom))",
   boxShadow: "0 -1px 2px rgba(15,23,42,0.04), 0 -8px 32px rgba(15,23,42,0.16)",
+  overflowY: "auto",
+};
+export const sheetGrip = {
+  flex: "0 0 auto", width: 36, height: 4, borderRadius: 999,
+  background: C.border, margin: "0 auto 4px",
 };
 
 export const closeBtn = {
@@ -216,8 +262,32 @@ export const linkBtn = {
   cursor: "pointer", padding: 0, fontSize: 12,
 };
 
+// 부대비용 내역 (평형 카드 안에서 접힘/펼침).
+export const costToggle = {
+  border: "none", background: "none", color: C.blue, fontSize: 11,
+  fontWeight: 600, cursor: "pointer", padding: 0, textAlign: "left",
+};
+export const costTable = {
+  marginTop: 6, padding: "7px 9px", background: "#f8fafc",
+  borderWidth: 1, borderStyle: "solid", borderColor: C.divider,
+  borderRadius: 9, fontSize: 11, color: C.sub,
+};
+export const costRow = {
+  display: "flex", justifyContent: "space-between", padding: "2px 0",
+};
+export const monthlyLine = {
+  fontSize: 12, color: C.sub, marginTop: 3,
+  fontVariantNumeric: "tabular-nums",
+};
+// 부대비용 반영으로 필요자금이 늘어난 것을 최초 1회 알린다.
+export const migrateNotice = {
+  padding: "9px 11px", background: "#fffbeb",
+  borderWidth: 1, borderStyle: "solid", borderColor: "#fde68a",
+  borderRadius: 10, fontSize: 11, color: "#92400e", lineHeight: 1.5,
+};
+
 export const modalOverlay = {
-  position: "fixed", inset: 0, zIndex: 50, background: "rgba(15,23,42,0.40)",
+  position: "fixed", inset: 0, zIndex: Z.MODAL, background: "rgba(15,23,42,0.40)",
   backdropFilter: "blur(4px)", WebkitBackdropFilter: "blur(4px)",
   display: "flex", alignItems: "center", justifyContent: "center", padding: 20,
 };

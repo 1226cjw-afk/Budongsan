@@ -4,11 +4,13 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { REGIONS, ALL_REGIONS, regionName } from "../lib/regions";
 import { calcMaxLoan, isRegulated } from "../lib/loanPolicy";
 import { C } from "../lib/palette";
-import { daysUntil, leaseLabel, formatManwon, shortDate, formatAgo } from "../lib/format";
+import { daysUntil, leaseLabel, formatManwon, shortDate, formatAgo, monthsToLabel } from "../lib/format";
 import { favKey, distMeters, summarize, groupByPyeong, filterTrades } from "../lib/tradeStats";
 import { naverLandUrl } from "../lib/naverLand";
+import { countNew } from "../lib/briefingSeen";
 import TrendChart from "./TrendChart";
 import HelpModal from "./HelpModal";
+import { MobileTopBar, MobileSheet } from "./MobileShell";
 import {
   controlPanel, panelTitle, newsTabLink, detailPanel, selectStyle, pillBtn, pillBtnOn,
   statusText, refreshBtn, hintLine, hintText, legendRow, legendItem, legendDot,
@@ -16,9 +18,10 @@ import {
   favRow, favEditBtn, favDdayLine, favEditBox, favSaveBtn,
   sortBar, sortSelect, onlyBuyLabel, listScroll, rowTop, rowName, rowPrice, rowSub, rowBadges,
   hotBadge, upBadge, downBadge, rebuildBadge, gapOkBadge, gapNoBadge, excessBadge, excessHotBadge,
-  mobileListSheet, closeBtn, starBtn, sectionLabel, newsLink, naverLandLink,
+  closeBtn, starBtn, sectionLabel, newsLink, naverLandLink,
   ownedBtn, ownedBtnOn, ownedBox, ownedClearBtn, noticeBox, pyeongCard, pyeongCardOn, loanRow,
   basisToggle, basisBtn, basisBtnOn, helpBtn, bindingTag, regBadge, nonRegBadge, linkBtn,
+  costToggle, costTable, costRow, monthlyLine, migrateNotice, newsBadge,
 } from "./mapStyles";
 
 // 카카오맵 + 국토부 실거래가. 지도 이동 시 중심 지역을 자동 인식해 그 시군구 데이터를 로드하고,
@@ -46,6 +49,16 @@ const PRICE_FILTERS = [
   { value: "p4", label: "9~12억", min: 90000, max: 120000 },
 ];
 
+// 월 상환액 상한 필터(만원/월). 자금 프로필(연소득)이 있어야 계산되므로 그때만 노출한다.
+// 사람이 감당 여부를 판단하는 실제 단위가 "월 얼마"라 가격 구간보다 직관적이다.
+const MONTHLY_FILTERS = [
+  { value: "all", label: "월상환 무관", max: Infinity },
+  { value: "m100", label: "월 100만 이하", max: 100 },
+  { value: "m150", label: "월 150만 이하", max: 150 },
+  { value: "m200", label: "월 200만 이하", max: 200 },
+  { value: "m300", label: "월 300만 이하", max: 300 },
+];
+
 // 리스트 패널: 배지·정렬 기준.
 const HOT_PCT = 15; // 1년 상승률 이 값 이상이면 🔥 급등 배지(핀에도 표시)
 const EXCESS_HOT_PCT = 10; // 지역 중앙값 대비 초과상승 이 값(%p) 이상이면 선반영 경고 톤
@@ -62,10 +75,12 @@ const SORT_GAP = { v: "gap", label: "✓ 자금 여유순" }; // 내 자금 설�
 
 // 대출 계산용 내 자금 프로필. 단위: 만원(보유자산/연소득/기존상환액), % (금리), 년(만기).
 const PROFILE_KEY = "re_loan_profile";
+const COST_NOTICE_KEY = "re_cost_notice_seen"; // 부대비용 반영 안내를 본 적 있는지
 const DEFAULT_PROFILE = {
   assets: "",        // 보유자산(여유 현금)
   income: "",        // 연소득
   existingDebt: "",  // 기존 대출 연 원리금상환액
+  monthlySaving: "", // 월 저축 가능액 — "얼마 더 모으면 되나" 계산용(선택)
   householdType: "무주택", // 무주택 | 1주택 | 다주택
   isFirstTime: false,      // 생애최초 구입
   rate: "4",         // 실제 대출금리(%)
@@ -94,6 +109,7 @@ export default function KakaoMap() {
   const [lawdCd, setLawdCd] = useState(DEFAULT_CODE);
   const [area, setArea] = useState("all");
   const [price, setPrice] = useState("all");
+  const [monthly, setMonthly] = useState("all"); // 월 상환액 상한
   const [loading, setLoading] = useState(false);
   const [lastUpdated, setLastUpdated] = useState(null); // 캐시 갱신 시각(ISO)
   const [selected, setSelected] = useState(null);
@@ -107,14 +123,19 @@ export default function KakaoMap() {
   const [showProfile, setShowProfile] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
   const [priceBasis, setPriceBasis] = useState("recent"); // recent | avg
+  const [showCost, setShowCost] = useState(null); // 부대비용 내역 펼친 평형(m2) | null
+  const [showCostNotice, setShowCostNotice] = useState(false);
   const [isMobile, setIsMobile] = useState(false); // 좁은 화면 → 패널을 시트/상단바로
+  const [newsNew, setNewsNew] = useState(0); // 브리핑 미확인 단지 수 (📰 배지)
 
   // 단지 리스트 패널 (네이버식) — tradesData는 dataRef와 같은 내용의 반응형 사본(리스트 파생용).
   const [tradesData, setTradesData] = useState(null);
   const [rank, setRank] = useState(new Map()); // `${umd}|${apt}` → {yoyPct, recentN, pastN}
   const [sortBy, setSortBy] = useState("yoy");
   const [onlyBuyable, setOnlyBuyable] = useState(false); // 구매가능 단지만 (자금 설정 시)
-  const [showList, setShowList] = useState(false); // 모바일 목록 시트 (데스크톱은 항상 표시)
+  // 모바일 하단 시트 슬롯 — null|"settings"|"list"|"detail". 한 번에 하나만 열린다.
+  // (데스크톱은 좌측 패널에 컨트롤+리스트가 항상 보이므로 이 상태를 쓰지 않는다.)
+  const [sheet, setSheet] = useState(null);
   const [householdMap, setHouseholdMap] = useState(new Map()); // favKey → 세대수|null (lazy)
   const infoInflightRef = useRef(new Set()); // 세대수 조회 중복 방지
 
@@ -141,6 +162,14 @@ export default function KakaoMap() {
   useEffect(() => {
     lawdCdRef.current = lawdCd;
   }, [lawdCd]);
+
+  // 모바일: 단지가 선택되면 세부 시트로 전환한다. 슬롯이 하나라 설정·목록 시트는
+  // 자동으로 닫히고, 따라서 상단 바와 겹칠 패널이 애초에 존재하지 않는다.
+  useEffect(() => {
+    if (!isMobile) return;
+    if (selected) setSheet("detail");
+    else setSheet((s) => (s === "detail" ? null : s));
+  }, [selected, isMobile]);
 
   const detail = useMemo(() => {
     if (!selected) return null;
@@ -173,7 +202,7 @@ export default function KakaoMap() {
   const assets = (Number(profile.assets) || 0) + ownedNet;
   const regulated = isRegulated(lawdCd);
 
-  function loanForPrice(price) {
+  function loanForPrice(price, m2 = 0) {
     if (!hasProfile || !price) return null;
     return calcMaxLoan({
       price,
@@ -184,22 +213,28 @@ export default function KakaoMap() {
       existingAnnualDebt: Number(profile.existingDebt) || 0,
       rate: (Number(profile.rate) || 0) / 100,
       termYears: Number(profile.termYears) || 40,
+      area: m2,   // 농특세(85㎡ 초과) 판정
+      assets,     // neededLoan·월납 계산 기준
     });
   }
 
-  // 한 단지에서 대출 가능한 평형 중 최대 자금 여유(보유자산 − 필요자금, 만원). 전 평형 대출 불가면 null.
+  // 한 단지에서 "대출 가능 + 월납 상한 이내"인 평형 중 자금 여유가 최대인 것.
+  // 반환 {gap, monthly} — 조건을 만족하는 평형이 없으면 null.
   // priceBasis(최근/평균) 기준가 사용. 마커 색칠(여유 ≥ 0 = 초록)과 리스트 여유 배지·정렬이 이 계산을 공유.
-  function bestGap(hits) {
-    let gap = null;
+  // ⚠️ gap과 monthly는 반드시 **같은 평형**에서 나와야 한다. 평형을 넘나들며 고르면
+  //    "A평형은 살 수 있고 B평형은 월납이 싸다"는 이유로 못 사는 단지가 통과한다.
+  function bestFit(hits) {
+    const cap = (MONTHLY_FILTERS.find((m) => m.value === monthly) ?? MONTHLY_FILTERS[0]).max;
+    let best = null;
     for (const g of groupByPyeong(hits)) {
       const gp = priceBasis === "recent" ? g.recentAmount : g.avg;
-      const ln = loanForPrice(gp);
-      if (ln && ln.maxLoan > 0) {
-        const d = assets - ln.requiredCash;
-        if (gap == null || d > gap) gap = d;
-      }
+      const ln = loanForPrice(gp, g.m2);
+      if (!ln || ln.maxLoan <= 0) continue;
+      if (ln.monthlyPayment > cap) continue;
+      const d = assets - ln.requiredCash;
+      if (!best || d > best.gap) best = { gap: d, monthly: ln.monthlyPayment };
     }
-    return gap;
+    return best;
   }
 
   // 지도 초기화 (1회) — services 라이브러리로 좌표→지역 변환 + 빈 곳 클릭→가까운 단지.
@@ -276,6 +311,20 @@ export default function KakaoMap() {
     loadFavorites();
   }, []);
 
+  // 브리핑 미확인 개수 — 📰 배지용. 캐시 전용 라우트라 가볍고, 실패하면 배지만 생략한다.
+  // ready 이후에 걸어 지도 초기 로드를 지연시키지 않는다.
+  useEffect(() => {
+    if (!ready) return;
+    let alive = true;
+    fetch("/api/briefing")
+      .then((r) => r.json())
+      .then((d) => alive && setNewsNew(countNew(d.complexes)))
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [ready]);
+
   // 내 자금 프로필 복원(로컬 저장).
   useEffect(() => {
     try {
@@ -285,6 +334,26 @@ export default function KakaoMap() {
       /* 무시 */
     }
   }, []);
+
+  // 부대비용 반영 안내 — 자금을 설정해 둔 기존 사용자에게만, 최초 1회.
+  // 필요자금이 갑자기 커 보여 "고장났나" 싶은 것을 막는다.
+  useEffect(() => {
+    if (!hasProfile) return;
+    try {
+      if (!localStorage.getItem(COST_NOTICE_KEY)) setShowCostNotice(true);
+    } catch {
+      /* 무시 */
+    }
+  }, [hasProfile]);
+
+  function dismissCostNotice() {
+    setShowCostNotice(false);
+    try {
+      localStorage.setItem(COST_NOTICE_KEY, "1");
+    } catch {
+      /* 무시 */
+    }
+  }
 
   function updateProfile(patch) {
     setProfile((p) => {
@@ -352,7 +421,7 @@ export default function KakaoMap() {
     if (dataRef.current.lawdCd !== lawdCd) return;
     renderMarkers();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [area, price, favorites, profile, priceBasis, rank]);
+  }, [area, price, monthly, favorites, profile, priceBasis, rank]);
 
   // 단지 바뀌면 추세를 '가장 거래 많은 평형'으로 초기화. 추세는 평형별만 본다
   // (전체는 평형이 섞여 시세가 들쭉날쭉 → 추세 의미가 흐려짐).
@@ -521,8 +590,8 @@ export default function KakaoMap() {
         // 구매가능: 어떤 평형이든 보유자산으로 필요자금을 댈 수 있으면(최대 여유 ≥ 0) true.
         let buyable = null;
         if (affordMode) {
-          const gap = bestGap(hits);
-          buyable = gap != null && gap >= 0;
+          const fit = bestFit(hits);
+          buyable = fit != null && fit.gap >= 0;
         }
         if (buyable) buyableCount += 1;
 
@@ -563,7 +632,12 @@ export default function KakaoMap() {
       fitRef.current = false;
     }
 
-    const tags = [area === "all" ? null : aB.label, price === "all" ? null : pB.label]
+    const mB = MONTHLY_FILTERS.find((m) => m.value === monthly) ?? MONTHLY_FILTERS[0];
+    const tags = [
+      area === "all" ? null : aB.label,
+      price === "all" ? null : pB.label,
+      monthly === "all" ? null : mB.label,
+    ]
       .filter(Boolean)
       .join(" · ");
     const buyTag = affordMode && shownComplexes ? ` · 🟢 구매가능 ${buyableCount}/${shownComplexes}곳` : "";
@@ -587,7 +661,8 @@ export default function KakaoMap() {
       const hits = filterTrades(c.trades, aB, pB);
       const stat = summarize(hits);
       if (!stat) continue;
-      const gap = affordMode ? bestGap(hits) : null; // 마커 색칠과 같은 계산(bestGap) 공유
+      const fit = affordMode ? bestFit(hits) : null; // 마커 색칠과 같은 계산(bestFit) 공유
+      const gap = fit ? fit.gap : null;
       const key = favKey(tradesData.lawdCd, c.umdNm, c.aptNm);
       const buildYear = Number(hits[0]?.buildYear) || null;
       rows.push({
@@ -599,7 +674,7 @@ export default function KakaoMap() {
         buildYear,
         rebuild: buildYear != null && thisYear - buildYear >= REBUILD_AGE,
         gap,
-        noLoan: affordMode && gap == null, // 다주택 규제 등으로 전 평형 대출 불가
+        noLoan: affordMode && gap == null, // 대출 불가(다주택 규제 등) 또는 월납 상한 초과
         buyable: gap != null && gap >= 0,
         isFav: favSet.has(key),
         households: householdMap.get(key) ?? null,
@@ -616,7 +691,7 @@ export default function KakaoMap() {
     }[sortBy];
     return cmp ? filtered.sort(cmp) : filtered;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tradesData, area, price, priceBasis, rank, profile, sortBy, onlyBuyable, favSet, householdMap]);
+  }, [tradesData, area, price, monthly, priceBasis, rank, profile, sortBy, onlyBuyable, favSet, householdMap]);
 
   // 리스트 상위 N개 행의 세대수 lazy 조회(/api/complex-info POST 일괄 — 서버가 kapt_cache 조회).
   useEffect(() => {
@@ -661,7 +736,6 @@ export default function KakaoMap() {
   // 리스트 행 클릭 → 단지 선택 + 지도 이동(자동맞춤 없이 그 위치로).
   function selectComplex(c) {
     setSelected(c);
-    if (isMobile) setShowList(false);
     if (c.lat != null && mapRef.current) {
       fitRef.current = false;
       mapRef.current.panTo(new window.kakao.maps.LatLng(c.lat, c.lng));
@@ -693,6 +767,7 @@ export default function KakaoMap() {
     if (!affordMode) {
       if (sortBy === "gap") setSortBy("yoy");
       if (onlyBuyable) setOnlyBuyable(false);
+      if (monthly !== "all") setMonthly("all");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [affordMode]);
@@ -776,31 +851,37 @@ export default function KakaoMap() {
     </>
   );
 
-  // 모바일: 컨트롤은 상단 전체폭 바, 세부패널은 하단 시트(지도 상단부가 보이도록).
-  // 데스크톱: 좌측 패널이 컨트롤+단지 리스트(네이버식)로 전체 높이.
+  // 모바일: 상단은 1줄 바(MobileTopBar), 컨트롤·목록·세부는 전부 하단 시트 하나로.
+  //   시트 슬롯이 단일 상태(sheet)라 동시에 둘 이상 열릴 수 없다 = 겹침 구조적 불가.
+  //   패널 자체는 시트 안의 콘텐츠가 되므로 위치·배경·그림자를 벗긴다.
+  // 데스크톱: 좌측 패널이 컨트롤+단지 리스트(네이버식)로 전체 높이. 변경 없음.
+  const bare = {
+    position: "static", width: "auto", padding: 0,
+    background: "none", boxShadow: "none", border: "none",
+  };
   const controlPanelStyle = isMobile
-    ? { ...controlPanel, left: 8, right: 8, top: 8, width: "auto", padding: 11, gap: 8 }
+    ? { ...controlPanel, ...bare, borderRadius: 0 }
     : { ...controlPanel, bottom: 14, width: 340, overflow: "hidden" };
   const detailPanelStyle = isMobile
-    ? {
-        ...detailPanel,
-        top: "auto", left: 0, right: 0, bottom: 0, width: "auto",
-        maxHeight: "60vh", borderRadius: "20px 20px 0 0",
-        padding: "16px 16px calc(18px + env(safe-area-inset-bottom))",
-        boxShadow: "0 -1px 2px rgba(15,23,42,0.04), 0 -8px 32px rgba(15,23,42,0.16)",
-      }
+    ? { ...detailPanel, ...bare, overflowY: "visible" }
     : detailPanel;
 
-  return (
-    <div style={{ position: "relative", width: "100%", height: "100vh" }}>
-      <div ref={containerRef} style={{ width: "100%", height: "100%" }} />
+  // ⚠️ status 전문(필터 태그·구매가능 수 포함)은 1줄 바에 안 들어간다 → 짧은 버전.
+  const shortSummary = tradesData
+    ? `${regionLabel} · ${listRows ? listRows.length : 0}곳`
+    : regionLabel;
+  const hasFilter = area !== "all" || price !== "all" || monthly !== "all";
 
-      {/* 좌측 상단 컨트롤 (모바일: 상단 전체폭 바) */}
-      <div style={controlPanelStyle}>
+  const controlPanelContent = (
+    <>
+      {!isMobile && (
         <div style={{ ...panelTitle, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           <span>🏠 실거래 · 대출 비교</span>
-          <a href="/news" style={newsTabLink}>📰 뉴스</a>
+          <a href="/news" style={newsTabLink}>
+            📰 뉴스{newsNew > 0 && <span style={newsBadge}>{newsNew}</span>}
+          </a>
         </div>
+      )}
 
         <select
           value={lawdCd}
@@ -830,6 +911,20 @@ export default function KakaoMap() {
           </select>
         </div>
 
+        {affordMode && (
+          <select
+            value={monthly}
+            onChange={(e) => setMonthly(e.target.value)}
+            disabled={loading}
+            style={selectStyle}
+            title="월 원리금 상환액 상한으로 거르기"
+          >
+            {MONTHLY_FILTERS.map((m) => (
+              <option key={m.value} value={m.value}>{m.label}</option>
+            ))}
+          </select>
+        )}
+
         <div style={{ display: "flex", gap: 8 }}>
           <button
             onClick={() => { setShowFavs((v) => !v); setShowProfile(false); }}
@@ -845,7 +940,7 @@ export default function KakaoMap() {
           </button>
           {isMobile && (
             <button
-              onClick={() => { setShowList(true); setShowFavs(false); setShowProfile(false); }}
+              onClick={() => { setSheet("list"); setShowFavs(false); setShowProfile(false); }}
               style={pillBtn}
             >
               📋 목록
@@ -867,6 +962,15 @@ export default function KakaoMap() {
             🔄 갱신
           </button>
         </div>
+        {showCostNotice && (
+          <div style={migrateNotice}>
+            필요자금에 <b>취득세·중개보수·등기비</b>가 반영되도록 개선했습니다.
+            이전보다 필요자금이 커 보이는 게 정상이에요.
+            <button onClick={dismissCostNotice} style={{ ...linkBtn, marginLeft: 6, fontSize: 11 }}>
+              확인
+            </button>
+          </div>
+        )}
         {hasProfile && assets > 0 && (
           <div style={legendRow}>
             <span style={legendItem}><span style={{ ...legendDot, background: C.green }} />구매가능</span>
@@ -941,6 +1045,17 @@ export default function KakaoMap() {
             <label style={fieldRow}>
               <span style={fieldLabel}>기존대출 연상환</span>
               <input type="number" value={profile.existingDebt} onChange={(e) => updateProfile({ existingDebt: e.target.value })} placeholder="0" style={fieldInput} />
+            </label>
+            <label style={fieldRow}>
+              <span style={fieldLabel}>월 저축액</span>
+              <input
+                type="number"
+                value={profile.monthlySaving}
+                onChange={(e) => updateProfile({ monthlySaving: e.target.value })}
+                placeholder="선택"
+                style={fieldInput}
+                title="입력하면 자금이 부족한 평형에 '얼마나 더 모으면 되는지'가 표시됩니다"
+              />
             </label>
             <label style={fieldRow}>
               <span style={fieldLabel}>가구유형</span>
@@ -1033,24 +1148,18 @@ export default function KakaoMap() {
           </div>
         )}
 
-        {!isMobile && listContent}
-      </div>
+    </>
+  );
 
-      {/* 모바일 단지 목록 시트 */}
-      {isMobile && showList && (
-        <div style={mobileListSheet}>
-          <button onClick={() => setShowList(false)} style={closeBtn} aria-label="닫기">×</button>
-          <div style={{ fontSize: 13, fontWeight: 700, color: C.text, paddingRight: 24 }}>
-            📋 {regionLabel} 단지 목록
-          </div>
-          {listContent}
-        </div>
+  // ⚠️ `selected && detail &&` 가드 필수 — JSX는 변수로 만드는 순간 children 표현식이
+  // 평가되므로, 가드 없이 두면 selected가 null일 때 `selected.aptNm`이 터진다
+  // (예전엔 렌더 안 `{selected && detail && (...)}`에 감싸여 있어 문제가 없었다).
+  const detailContent = selected && detail && (
+    <>
+      {/* 모바일 시트에서는 백드롭 탭·그립으로 닫는다. closeBtn은 absolute라 시트에서 좌표가 어긋남. */}
+      {!isMobile && (
+        <button onClick={() => setSelected(null)} style={closeBtn} aria-label="닫기">×</button>
       )}
-
-      {/* 우측 세부정보 패널 (모바일: 하단 시트) */}
-      {selected && detail && (
-        <div style={detailPanelStyle}>
-          <button onClick={() => setSelected(null)} style={closeBtn} aria-label="닫기">×</button>
           <div style={{ display: "flex", alignItems: "flex-start", gap: 8, paddingRight: 24 }}>
             <div style={{ flex: 1 }}>
               <div style={{ fontSize: 17, fontWeight: 700, color: C.text, lineHeight: 1.25 }}>{selected.aptNm}</div>
@@ -1217,11 +1326,83 @@ export default function KakaoMap() {
                           </span>
                           <span>필요자금 <b style={{ color: C.text }}>{formatManwon(ln.requiredCash)}</b></span>
                         </div>
+
+                        {/* 월납은 실제 금리 기준 현금흐름. DSR은 스트레스 금리 기준 규제 수치라 다르다. */}
+                        <div style={monthlyLine}>
+                          월 <b style={{ color: C.text }}>{ln.monthlyPayment.toLocaleString()}만원</b>
+                          {ln.dsrRatio != null && (
+                            <span style={{ color: C.muted }}>
+                              {" · DSR "}{Math.round(ln.dsrRatio * 100)}%
+                            </span>
+                          )}
+                        </div>
+
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation(); // 카드 클릭(추세 선택기)과 충돌 방지
+                            setShowCost((v) => (v === g.m2 ? null : g.m2));
+                          }}
+                          style={costToggle}
+                        >
+                          {showCost === g.m2 ? "▾" : "▸"} 부대비용 {formatManwon(ln.acquisitionCost.total)} 내역
+                        </button>
+                        {showCost === g.m2 && (
+                          <div style={costTable} onClick={(e) => e.stopPropagation()}>
+                            <div style={costRow}>
+                              <span>취득세 ({(ln.acquisitionCost.taxRate * 100).toFixed(2)}%)</span>
+                              <span>{formatManwon(ln.acquisitionCost.acquisitionTax)}</span>
+                            </div>
+                            <div style={costRow}>
+                              <span>지방교육세</span>
+                              <span>{formatManwon(ln.acquisitionCost.localEduTax)}</span>
+                            </div>
+                            {ln.acquisitionCost.ruralTax > 0 && (
+                              <div style={costRow}>
+                                <span>농어촌특별세 (85㎡ 초과)</span>
+                                <span>{formatManwon(ln.acquisitionCost.ruralTax)}</span>
+                              </div>
+                            )}
+                            <div style={costRow}>
+                              <span>중개보수 (VAT 포함)</span>
+                              <span>{formatManwon(ln.acquisitionCost.brokerFee)}</span>
+                            </div>
+                            <div style={costRow}>
+                              <span>등기·채권 등 (근사)</span>
+                              <span>{formatManwon(ln.acquisitionCost.registryEtc)}</span>
+                            </div>
+                            {profile.householdType === "다주택" && (
+                              <div style={{ marginTop: 4, color: C.muted, lineHeight: 1.5 }}>
+                                2주택 취득 기준입니다. 3주택 이상이면 취득세율이 12%로 더 높습니다.
+                              </div>
+                            )}
+                          </div>
+                        )}
+
                         {assets > 0 && (
                           <div style={{ fontSize: 12, fontWeight: 700, marginTop: 3, color: gap >= 0 ? C.green : C.red }}>
-                            {gap >= 0
-                              ? `✓ 매수 가능 · 여유 ${formatManwon(gap)}`
-                              : `✗ 자금 부족 ${formatManwon(-gap)}`}
+                            {gap >= 0 ? (
+                              `✓ 매수 가능 · 여유 ${formatManwon(gap)}`
+                            ) : (
+                              <>
+                                {`✗ 자금 부족 ${formatManwon(-gap)}`}
+                                {(() => {
+                                  // 현재 시세 기준 단순 나눗셈. 집값 상승·금리 변동은 반영하지 않는다
+                                  // — 가정을 늘리면 숫자만 그럴듯해지고 신뢰도는 떨어진다.
+                                  const save = Number(profile.monthlySaving) || 0;
+                                  if (save <= 0) return null;
+                                  const label = monthsToLabel(-gap / save);
+                                  if (!label) return null;
+                                  return (
+                                    <span
+                                      style={{ fontWeight: 500, color: C.sub }}
+                                      title="현재 시세 기준 단순 계산입니다. 집값 변동은 반영하지 않습니다."
+                                    >
+                                      {` · 월 ${save.toLocaleString()}만 저축 시 ${label}`}
+                                    </span>
+                                  );
+                                })()}
+                              </>
+                            )}
                           </div>
                         )}
                       </div>
@@ -1230,8 +1411,58 @@ export default function KakaoMap() {
                 </div>
               );
             })}
+      </div>
+    </>
+  );
+
+  return (
+    <div style={{ position: "relative", width: "100%", height: "100vh" }}>
+      <div ref={containerRef} style={{ width: "100%", height: "100%" }} />
+
+      {isMobile ? (
+        <>
+          <MobileTopBar
+            summary={shortSummary}
+            hasFilter={hasFilter}
+            onOpenSettings={() => setSheet("settings")}
+            newsNew={newsNew}
+          />
+          <MobileSheet
+            open={sheet != null}
+            onClose={() => {
+              if (sheet === "detail") setSelected(null); // effect가 sheet도 null로 되돌린다
+              else setSheet(null);
+            }}
+          >
+            {sheet === "settings" && (
+              <>
+                {controlPanelContent}
+                <button onClick={() => setSheet("list")} style={pillBtn}>
+                  📋 단지 목록 보기
+                </button>
+              </>
+            )}
+            {sheet === "list" && (
+              <>
+                <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>
+                  📋 {regionLabel} 단지 목록
+                </div>
+                {listContent}
+              </>
+            )}
+            {sheet === "detail" && detailContent && (
+              <div style={detailPanelStyle}>{detailContent}</div>
+            )}
+          </MobileSheet>
+        </>
+      ) : (
+        <>
+          <div style={controlPanelStyle}>
+            {controlPanelContent}
+            {listContent}
           </div>
-        </div>
+          {detailContent && <div style={detailPanelStyle}>{detailContent}</div>}
+        </>
       )}
 
       {showHelp && <HelpModal onClose={() => setShowHelp(false)} />}

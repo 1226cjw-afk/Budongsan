@@ -5,10 +5,18 @@
 대출 가능 여부·필요 대출액을 계산해 비교해주는 개인용 부동산 웹앱.
 참조 서비스: 네이버 부동산 / 아파트실거래 / 호갱노노 (데이터는 직접 가져오지 않고 같은 원천에서 수집).
 
-## 현황 (2026-07-08)
-MVP~3단계 + 네이버식 단지 리스트 패널(1년 상승률·재건축연한·자금여유 배지/정렬) + UI 버그 정리
-+ 📰 데일리 뉴스 탭(/news, cron 자동수집)까지 **구현·배포 완료, 실서비스 가동 중**.
+## 현황 (2026-07-25)
+MVP~3단계 + 네이버식 단지 리스트 패널(1년 상승률·재건축연한·자금여유 배지/정렬)
++ 📰 데일리 뉴스 탭(/news, cron 자동수집)까지 **배포 완료, 실서비스 가동 중**.
+**2026-07-25**: 필요자금에 부대비용(취득세·중개보수·등기비) 반영 + 월 상환액·DSR% 표시,
+월상환액 상한 필터, "얼마 더 모으면 되나", /news를 **오늘의 브리핑**으로 승격
+(관심 단지 변동·일정·영향 뉴스), 모바일 겹침 해결(상단 1줄 바 + 하단 시트 단일 슬롯).
 남은 백로그·세부 진척은 `PROGRESS.md`.
+
+**활용 루틴** (설계 의도 — 이 앱은 "탐색"이 아니라 "반복 확인" 도구):
+매일 = 브리핑(/news)에서 관심 단지 새 거래·내 대출에 영향 갈 뉴스 / 월 1회 = 지도에서
+자금 설정→구매가능만→여유순으로 후보 압축→★ / 결정 시 = 평형 카드의 필요현금·월납·부대비용.
+★ 담는 행위가 브리핑을 만든다(cron이 그 지역을 매일 갱신 → 브리핑에 변동이 뜸).
 
 ## 기술 스택
 - **Next.js** (App Router) + **Supabase** (DB/Auth/실시간)
@@ -41,7 +49,7 @@ MVP~3단계 + 네이버식 단지 리스트 패널(1년 상승률·재건축연�
 
 ## 핵심 기능 (전부 구현됨)
 지도+실거래 마커 · 평형별 대출 계산(LTV/DSR)·구매가능 색칠 · 즐겨찾기+cron 자동갱신 ·
-단지 리스트 패널(상승률/재건축/자금 정렬·배지) · 추세 차트(1·3년) · 데일리 뉴스 탭(/news) · 모바일 반응형.
+단지 리스트 패널(상승률/재건축/자금 정렬·배지) · 추세 차트(1·3년) · 오늘의 브리핑 탭(/news) · 모바일 반응형.
 초기 목표·단계별 이력은 `PROGRESS.md` 참조.
 
 ## 개발 메모
@@ -50,18 +58,22 @@ MVP~3단계 + 네이버식 단지 리스트 패널(1년 상승률·재건축연�
   - GitHub `main`에 push하면 Vercel이 **자동 재배포**(대시보드 연결됨). env 변경은 Vercel 대시보드 Settings → 변경 후 Redeploy 필요. `vercel.json` cron은 push 시 자동 반영
   - 배포 반영 확인(CLI 불가): prod 홈 HTML의 `/_next/static/chunks/*.js` 파일명 해시가 배포마다 바뀜 → push 후 해시 변하는지 폴링해 안착 확인. 번들 grep은 **문자열 리터럴/CSS클래스**로(JS 변수·함수명은 minify로 사라짐). ⚠️ **서버 코드만** 바뀐 배포(API/lib)는 청크 해시가 **안 변함**(클라 번들 동일, 2026-07-02 확인) → `gh api repos/1226cjw-afk/Budongsan/commits/<sha>/status`의 Vercel context가 success("Deployment has completed")인지로 확인
 - 구조: App Router. 지도/세부패널은 `app/components/KakaoMap.js`(클라이언트, SDK `autoload=false`로 동적 로드). **2026-07-12 리팩토링으로 분리**: 스타일 상수 → `components/mapStyles.js`(팔레트·그림자는 `lib/palette.js`, 뉴스 페이지와 공유) / 추세차트·도움말 모달 → `components/TrendChart.js`·`HelpModal.js` / 순수 헬퍼 → `lib/format.js`(포맷터·D-day)·`lib/tradeStats.js`(집계·필터)·`lib/naverLand.js`(딥링크)
-- `KakaoMap.js` 마커 함정: 마커는 `useEffect([area,price,favorites,profile,priceBasis,rank])`→`renderMarkers`로 그림 → 마커에 영향 주는 새 입력은 **이 deps에 꼭 추가**(아니면 미갱신). ⚠️ 이 effect의 `dataRef.lawdCd !== lawdCd` 스킵 **stale 가드는 지우지 말 것** — 지역 전환 중 deps가 먼저 바뀌면 옛 지역 데이터로 `setBounds`가 실행돼 `fitRef`를 소진 → 지도가 새 지역으로 안 움직여 **idle 핸들러가 지역을 되돌리는 레이스**(2026-07-02 실제 발생, rank 로드가 트리거). ⚠️ `panTo`(애니메이션)와 `fitRef=true`(로드 후 setBounds)를 **같이 걸지 말 것** — 캐시가 빠르면 setBounds 위로 panTo가 마저 진행돼 화면이 밀림(2026-07-03 실제 발생) → 이동+지역전환은 `gotoFavorite`처럼 `setCenter`+`setLevel(5)`+`fitRef=false`로
+- `KakaoMap.js` 마커 함정: 마커는 `useEffect([area,price,monthly,favorites,profile,priceBasis,rank])`→`renderMarkers`로 그림 → 마커에 영향 주는 새 입력은 **이 deps에 꼭 추가**(아니면 미갱신). ⚠️ 이 effect의 `dataRef.lawdCd !== lawdCd` 스킵 **stale 가드는 지우지 말 것** — 지역 전환 중 deps가 먼저 바뀌면 옛 지역 데이터로 `setBounds`가 실행돼 `fitRef`를 소진 → 지도가 새 지역으로 안 움직여 **idle 핸들러가 지역을 되돌리는 레이스**(2026-07-02 실제 발생, rank 로드가 트리거). ⚠️ `panTo`(애니메이션)와 `fitRef=true`(로드 후 setBounds)를 **같이 걸지 말 것** — 캐시가 빠르면 setBounds 위로 panTo가 마저 진행돼 화면이 밀림(2026-07-03 실제 발생) → 이동+지역전환은 `gotoFavorite`처럼 `setCenter`+`setLevel(5)`+`fitRef=false`로
 - `KakaoMap.js` 레이아웃:
-  - 좌측 패널 = **네이버식 단지 리스트**(데스크톱 전체높이 / 모바일 📋목록 하단시트) — `listRows` useMemo(**`tradesData` 반응형 사본** 기반, dataRef 아님) + 정렬 6종 + 배지(🔥상승률 15%↑·🏗준공30년↑·✓자금여유), 세대수는 상위 30행만 lazy
-  - 모바일은 `isMobile`(matchMedia 640px)+인라인스타일 스프레드(미디어쿼리 아님)
+  - **모바일 셸(2026-07-25 재구성)**: 상단 = 고정 높이 **1줄 바**(`MobileShell.MobileTopBar` — 짧은 요약 + ⚙️ + 📰), 나머지(지역·필터·자금·즐겨찾기·목록·세부)는 전부 **하단 시트 하나**. 시트 슬롯이 단일 상태 `sheet`(`null|settings|list|detail`)라 **동시에 둘 이상 열릴 수 없음 = 겹침 구조적 불가**(이전엔 상단 패널이 세로로 자라며 하단 시트와 z:10끼리 겹쳤음). 단지 선택 시 effect가 자동으로 `detail`로 전환. ⚠️ z-index는 `mapStyles.Z`(MAP/TOPBAR/BACKDROP/SHEET/MODAL) **상수로만** — 새 오버레이는 반드시 등록. ⚠️ `mobileSheet`에 `boxSizing:"border-box"` 필수(globals.css에 전역 리셋 없어 `maxHeight`가 패딩 26px 제외 → 70vh 초과, 2026-07-25 실측). ⚠️ 세부패널 `closeBtn`(absolute)은 시트에서 좌표가 어긋나 `!isMobile`일 때만 렌더 — 모바일은 백드롭 탭/그립으로 닫음
+  - ⚠️ `controlPanelContent`·`detailContent`처럼 JSX를 **변수로 뺄 때는 null 가드 필수** — JSX는 생성 시점에 children 표현식이 평가되므로 `const detailContent = selected && detail && (…)` 없이 두면 `selected.aptNm`이 터진다(렌더 안 `{selected && …}`에 감싸여 있을 때는 안전했음). 빌드의 prerender 단계가 잡아준다
+  - 좌측 패널 = **네이버식 단지 리스트**(데스크톱 전체높이 / 모바일은 시트 `list` 슬롯) — `listRows` useMemo(**`tradesData` 반응형 사본** 기반, dataRef 아님) + 정렬 6종 + 배지(🔥상승률 15%↑·🏗준공30년↑·✓자금여유), 세대수는 상위 30행만 lazy(중복방지 `infoInflightRef` Set은 **요청 settle 시 finally로 해제 필수** — 안 하면 rank 도착으로 `listRows`가 로드 직후 바뀌며 조회가 중단→키가 남아 세대수가 세션 내내 안 뜸, 2026-07-21 수정)
+  - 모바일 분기는 `isMobile`(matchMedia 640px)+인라인스타일 스프레드(미디어쿼리 아님). 시트 안에 들어가는 패널은 `bare`(position:static·배경/그림자 제거) 스프레드로 껍데기를 벗김
   - 세부패널은 **평형 카드가 추세 선택기** — 카드 클릭 시 그 카드 안에 추세차트 인라인(`trendArea`+`trendMonths` 12/36), 별도 "시세 추세" 섹션 없음
   - ⚠️ 컨트롤 패널은 **세로 flex 전체높이** — 직계 자식 공유 스타일에 `flex:1` 금지(세로로 성장, 시군구 select 304px 사고 2026-07-03; 가로 행에서만 사용처에서 덧씌울 것)
-  - 토글쌍 스타일(`xxx`/`xxxOn`)은 `xxxOn`이 `borderColor`만 덮으면 shorthand `border` 금지(React dev 경고 → `pillBtn`처럼 비shorthand). **스타일 상수 추가 전 `components/mapStyles.js`에서 이름 grep 필수** — 중복 정의 시 dev 컴파일 에러(`newsLink` 충돌 실제 발생 2026-07-08). 마커/리스트의 자금 여유 계산은 `bestGap()` 한 곳 공유(색칠=여유≥0)
-  - 갈아타기: 프로필 `owned`(평형 카드 "보유 지정" 토글, 기준가 스냅샷) — **`assets`가 여유현금+매도 실수령 합산으로 재정의**돼 구매가능 색칠·자금 여유순·평형 비교에 자동 전파(자금 관련 새 입력은 assets 정의 한 곳에만 반영할 것)
+  - 토글쌍 스타일(`xxx`/`xxxOn`)은 `xxxOn`이 `borderColor`만 덮으면 shorthand `border` 금지(React dev 경고 → `pillBtn`처럼 비shorthand). **스타일 상수 추가 전 `components/mapStyles.js`에서 이름 grep 필수** — 중복 정의 시 dev 컴파일 에러(`newsLink` 충돌 실제 발생 2026-07-08). 마커/리스트의 자금 여유 계산은 **`bestFit()` 한 곳 공유**(색칠=여유≥0). ⚠️ `bestFit`은 `{gap, monthly}`를 **같은 평형에서** 뽑아야 한다 — 평형을 넘나들며 고르면 "A평형은 살 수 있고 B평형은 월납이 싸다"는 이유로 못 사는 단지가 통과
+  - 갈아타기: 프로필 `owned`(평형 카드 "보유 지정" 토글, 기준가 스냅샷) — **`assets`가 여유현금+매도 실수령 합산으로 재정의**돼 구매가능 색칠·자금 여유순·평형 비교에 자동 전파
+  - **자금 관련 새 입력은 두 곳에만**: `assets` 정의(자기자금 쪽) / `calcMaxLoan`의 `requiredCash`(비용 쪽). 이 둘이 마커 색칠·리스트 배지·평형 카드·브리핑까지 전부 먹이는 단일 소스라 호출부에서 따로 더하지 말 것
 - `KakaoMap.js` 핀: 색은 `<style>`의 `.trade-pin--fav/ok/no`(자금설정 시 ok=초록/no=빨강 우선, 즐겨찾기는 ★, 급등은 🔥 프리픽스). 타지역 즐겨찾기는 `.trade-pin--away`(점선링) — `favoritesRef`(좌표 포함 전체목록)로 **현재지역 밖만** 렌더, 클릭 시 `gotoFavorite`로 이동
-- 코드 위치: `app/lib/`에 로직 집중 — **서버 전용(supabase 의존)**: `trades.js`(수집·지오코딩·캐시), `kapt.js`(세대수), `supabaseServer.js`(+`noDbResponse`) / **클라 공용**: `regions.js`(서울25+경기 + 지역검증), `loanPolicy.js`(LTV/DSR), `news.js`(뉴스 수집·수도권 필터·분류), `format.js`·`tradeStats.js`·`palette.js`·`naverLand.js` / `cronAuth.js`(cron Bearer 인증 공용). ⚠️ 실거래 코드는 **법정동 시군구 5자리** — **부천(41190)·화성(41590) 상위코드는 0건**이라 구별 코드로 등록(부천 4119x 3구 / 화성 2025신설 4159x 4구). 월 수집은 `fetchRawMonths` 일괄(캐시 `.in()` 1회 + 미스 전량 동시 — 국토부는 동시 호출 스로틀 없음, 실측 동시36=4.7s가 최속)
+- 코드 위치: `app/lib/`에 로직 집중 — **서버 전용(supabase 의존)**: `trades.js`(수집·지오코딩·캐시), `kapt.js`(세대수), `supabaseServer.js`(+`noDbResponse`) / **클라 공용**: `regions.js`(서울25+경기 + 지역검증), `loanPolicy.js`(LTV/DSR·월납·필요자금), `acquisitionCost.js`(취득세·중개보수·등기비 — `loanPolicy`가 import), `news.js`(뉴스 수집·수도권 필터·분류), `briefingSeen.js`(브리핑 🆕 판정, localStorage — 지도 배지와 공유), `format.js`·`tradeStats.js`·`palette.js`·`naverLand.js` / `cronAuth.js`(cron Bearer 인증 공용). ⚠️ 실거래 코드는 **법정동 시군구 5자리** — **부천(41190)·화성(41590) 상위코드는 0건**이라 구별 코드로 등록(부천 4119x 3구 / 화성 2025신설 4159x 4구). 월 수집은 `fetchRawMonths` 일괄(캐시 `.in()` 1회 + 미스 전량 동시 — 국토부는 동시 호출 스로틀 없음, 실측 동시36=4.7s가 최속) — 미스는 `allSettled`(한 달 실패해도 나머지 살림, 전량 실패 시에만 throw→502), 반환에 `latestFetched`(최근 fetched_at) 포함 → `/api/trades` 신선도는 별도 쿼리 없이 사용(2026-07-21)
+  - API(브리핑): `/api/briefing`(즐겨찾기 단지 최근 30일 거래 + D-30 내 일정) — ⚠️ **캐시 전용**(`fetchRawMonths(.., {cacheOnly:true})`)이라 외부 API를 **호출하지 않는다**. cron이 채워둔 `trade_raw_cache`만 읽고, 없는 지역은 조용히 생략. 변동률은 **같은 평형의 직전 거래**와 비교(평형이 다르면 무의미)
   - API(실거래·단지): `/api/trades`(N개월 병합) · `/api/trend`(월별 추세, `area`로 평형별, `months` 최대 36=3년) · `/api/favorites`(CRUD + PATCH=D-day 필드, 0004 컬럼 부재 시 GET 폴백·PATCH 409 graceful) · `/api/complex-info`(세대수/동수) · `/api/rank`(단지별 1년 상승률 — 최근 3개월 vs 12~14개월 전 ㎡당가, 창별 2건 미만 null)
-  - API(cron·뉴스): `/api/cron/refresh`(즐겨찾기 지역 최근2개월 재수집 + 추세 36개월 워밍) · `/api/cron/news`(뉴스 일수집 — `lib/news.js` 2단 소스: 네이버 키 있으면 API/없으면 구글 RSS, 키워드=기본8종(수도권·매매 위주)+즐겨찾기 지역, link PK upsert 중복제거+30일 프루닝) · `/api/news`(수집분 최신 300건 — 칩 필터는 클라). **수도권 온리**(2026-07-12): `isCapitalAreaNews()`를 수집(`fetchNews`)+조회(`/api/news`) 양쪽 적용 — 화이트리스트 우선이라 비수도권 지명"만" 언급된 기사만 제외, 카테고리는 `classifyNews()` 제목 룰(DB 컬럼 없음, 렌더 시 계산)
+  - API(cron·뉴스): `/api/cron/refresh`(즐겨찾기 지역 최근2개월 재수집 + 추세 36개월 워밍) · `/api/cron/news`(뉴스 일수집 — `lib/news.js` 2단 소스: 네이버 키 있으면 API/없으면 구글 RSS, 키워드=기본8종(수도권·매매 위주)+즐겨찾기 지역, link PK upsert 중복제거+30일 프루닝) · `/api/news`(수집분 최신 300건 — 칩 필터는 클라). 뉴스 페이지 상단은 `components/Briefing.js`(⭐관심단지·⏳일정·💰영향뉴스 3카드) — 자금 여유는 지도와 **같은 `calcMaxLoan`**으로 계산해 두 화면 숫자가 어긋나지 않게 함. 💰카드는 `classifyNews()`의 대출·금리/정책·세금 + 관심지역 기사(신규 분류 로직 없음). **수도권 온리**(2026-07-12): `isCapitalAreaNews()`를 수집(`fetchNews`)+조회(`/api/news`) 양쪽 적용 — 화이트리스트 우선이라 비수도권 지명"만" 언급된 기사만 제외, 카테고리는 `classifyNews()` 제목 룰(DB 컬럼 없음, 렌더 시 계산)
 - 단지 세대수(`kapt.js`): 실거래가 API엔 없음 → 국토부 공동주택 API 별도. **현행 엔드포인트(2026-06 검증)**: 목록 `AptListService3/getSigunguAptList3`(시군구→kaptCode), 기본정보 `AptBasisInfoServiceV4/getAphusBassInfoV4`(kaptCode→`kaptdaCnt`세대수)
   - ⚠️ **둘 다 data.go.kr 활용신청 필요**(자동승인, 2026-06-25 승인 확인) — 미승인 403 / 구버전 V2·V3는 500=폐기
   - ⚠️ **이 계열은 응답이 JSON**(실거래가 API의 XML과 정반대 — `_type=xml`줘도 JSON). `response.body.items[]`(목록)/`response.body.item`(기본정보, `kaptdaCnt`는 float). 미승인/오류 시 `{kaptCode:null}`로 graceful(세대수만 생략)
@@ -69,7 +81,9 @@ MVP~3단계 + 네이버식 단지 리스트 패널(1년 상승률·재건축연�
 - 네이버 외부링크(키 불필요): 헤더 "🔎 네이버 검색"=통합검색(전체탭), 평형 카드 "N건·🏠매물"=네이버 부동산 검색 딥링크 `m.land.naver.com/search/result/{umd aptNm}`. ⚠️ 단지 고정 URL 비공개 → 단지명 검색 **best-effort**(`naverLandUrl()`). ⚠️ 단지명 **괄호는 검색 실패**("동편마을(3단지)"→0건) → 괄호 2단계 처리(`naverLandUrl`): 안이 동·필지번호(숫자/영문/쉼표뿐 or `제?N(상가)동`)면 **통째 제거**(`한미(A1,A2,B)`→"한미"가 정확매칭, 2026-07-05 실측), 한글 들었으면 **공백으로 풀어 유지**(`동편마을(3단지)`→"동편마을 3단지" — 빼면 0건)
 - 자동 갱신: `vercel.json` cron 2개 — `/api/cron/refresh`(06:00 KST) + `/api/cron/news`(06:30 KST). **Hobby 한도 = 프로젝트당 cron 2개·1일1회라 꽉 참**(추가하려면 기존 라우트에 합칠 것). 라우트의 `maxDuration=60` + 추세 워밍 40s 데드라인 가드는 **지우지 말 것**(첫 워밍 타임아웃 방지, 미완주분은 다음 실행이 이어감). 보호용 `CRON_SECRET` env — 설정 시 `Authorization: Bearer <secret>` 필요(Vercel Cron이 자동 첨부). **배포 시 반드시 설정**(미설정이면 누구나 국토부 호출 트리거 가능). 로컬은 미설정이라 curl로 바로 호출 가능. `/api/trades` 응답에 `fetchedAt`(캐시 신선도) 포함
 - 스택 버전: Next.js 16 + React 19 (수동 스캐폴딩, `create-next-app` 미사용 — 기존 .md 파일 충돌 회피)
-- 변경 검증: `npx next build` (컴파일/타입). `next lint --file` 옵션은 없음.
+- 변경 검증: `npx next build` (컴파일/타입 + prerender) **+ `npm test`** (순수 lib, **Node 내장 `node:test` — 의존성 0**, 2026-07-25 도입). 현재 커버: `acquisitionCost`(세율 경계값)·`loanPolicy`(gap↔neededLoan 일치성)·`format`. ⚠️ `node --test tests/`(디렉터리 형태)는 `MODULE_NOT_FOUND`로 **실패** → 글로브를 따옴표로: `node --test "tests/*.test.mjs"`. ⚠️ `MODULE_TYPELESS_PACKAGE_JSON` 경고는 무해 — 없애려고 `package.json`에 `"type":"module"` **추가 금지**(Next 빌드 깨짐). `next lint --file` 옵션은 없음.
+- 세금·수수료(`acquisitionCost.js`): 취득세(지방세법 §11①8, 6억↓1%/6~9억 선형/9억↑3%)·지방교육세(세율×1/10, 중과 시 0.4% 고정)·농특세(**전용 85㎡ 초과만** 0.2%)·중개보수(공인중개사법 시행규칙 별표1 + VAT)·등기비. ⚠️ 등기비 `REGISTRY_RATE`/`REGISTRY_FIXED`만 **법령 아닌 경험치 근사**(채권 할인손실이 시세 의존) — 실제 견적 겪으면 이 둘만 교체. ⚠️ `householdType`이 3단계뿐이라 **`다주택`=2주택 취급**(조정 8%), 3주택 이상 12%는 미구현(사용자가 무주택/최대 1주택이라 미발생, 2026-07-25 결정)
+- ⚠️ `calcMaxLoan`의 `neededLoan`은 **`maxLoan`으로 클램프하지 말 것** — 한도를 넘는 것 자체가 자금 부족 신호이고, `gap ≥ 0 ⟺ maxLoan ≥ neededLoan` 교차검증이 여기서 나온다(클램프하면 부등식이 항상 참이 돼 검증이 죽음). 월납·DSR은 실제 받게 될 `plannedLoan = min(neededLoan, maxLoan)` 기준. 월납은 **실제 금리**, DSR은 **스트레스 금리** — 둘이 다른 게 정상(HelpModal에서 설명)
 - API 동작 확인: `npm run dev`(백그라운드) → 로그 "Ready" 대기 → `curl "http://localhost:3000/api/trades?lawdCd=11680&dealYmd=202605"`
 - UI 시각 검증(브라우저): `npm i --no-save playwright` + `chromium.launch({channel:"chrome",headless:true})` — **설치된 크롬 사용, 브라우저 다운로드 없음**(이 머신 검증됨). 임시 `scripts/tmp-*.mjs`로 실클릭·스크린샷(temp 폴더) 후 삭제. 핀 클릭은 겹침 인터셉트 잦음 → `elementFromPoint` 히트테스트로 클릭 가능한 핀 골라 클릭. 카카오 CustomOverlay는 **뷰포트 밖이면 DOM에 없음**(타지역 ★ 검증은 줌아웃 필요). 크기/레이아웃 버그는 스크린샷 전에 `getBoundingClientRect`·computedStyle **실측부터**(시군구 304px 사고를 즉시 특정한 방법). dev 첫 페이지 방문은 온디맨드 컴파일로 느림 → `waitForSelector` 타임아웃 45s 권장(15s 타임아웃 실제 발생). 자금 색칠(ok/no 핀) 검증은 `page.addInitScript`로 `re_loan_profile` localStorage 선주입. `aria-label="닫기"`는 세부패널·모달 2개 매칭(첫 요소가 오버레이에 가려 클릭 타임아웃, 2026-07-12) → 모달은 오버레이 좌표 `page.mouse.click`으로 닫기
 - lib·외부 API 단독 검증(dev서버 불필요): 임시 `scripts/*.mjs`에서 `.env.local` 수동 파싱(`process.env` 주입)→ `await import("../app/lib/..")`→ `fetch`. 지오코딩률 측정·data.go.kr 응답 확인에 유용. `app/lib` import 시 `MODULE_TYPELESS_PACKAGE_JSON` 경고는 무해(grep로 필터). 끝나면 스크립트 삭제(커밋 금지)

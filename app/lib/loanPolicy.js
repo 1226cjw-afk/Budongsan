@@ -12,6 +12,8 @@
 // 확인일: 2026-06-21
 // ──────────────────────────────────────────────────────────────
 
+import { calcAcquisitionCost } from "./acquisitionCost.js"; // 확장자 필수(raw node 단독 import)
+
 // 규제지역(조정대상지역 + 투기과열지구) — 10.15 대책 지정.
 // 서울 전역(LAWD_CD 11로 시작) + 경기 12개 시·군·구(아래 5자리 시군구 코드).
 const REGULATED_GYEONGGI = new Set([
@@ -76,10 +78,13 @@ function annualPaymentPerUnit(annualRate, termYears) {
   return monthly * 12;
 }
 
-// 대출 가능액 계산.
-// 입력(만원/연/소수율): price 매물가, annualIncome 연소득, existingAnnualDebt 기존 연 원리금상환액,
+// 대출 가능액 + 실제 자금 계획 계산.
+// 입력(만원/연/소수율): price 매물가, area 전용㎡(농특세 판정), assets 가용 자기자금,
+//   annualIncome 연소득, existingAnnualDebt 기존 연 원리금상환액,
 //   rate 실제 대출금리(예 0.04), termYears 만기.
-// 반환: ltvLimit/dsrLimit 각 한도, maxLoan 최종(둘 중 작은 값), binding 제약요인, requiredCash 필요 자기자금.
+// 반환: ltvLimit/dsrLimit 각 한도, maxLoan 최종(둘 중 작은 값), binding 제약요인,
+//   acquisitionCost 부대비용 내역, requiredCash 필요 자기자금(부대비용 포함),
+//   neededLoan 실제로 빌릴 금액, monthlyPayment 월 원리금(실제 금리), dsrRatio(스트레스 금리).
 export function calcMaxLoan({
   price,
   lawdCd,
@@ -89,6 +94,8 @@ export function calcMaxLoan({
   existingAnnualDebt = 0,
   rate = 0.04,
   termYears = 40,
+  area = 0,
+  assets = 0,
 }) {
   const regulated = isRegulated(lawdCd);
 
@@ -99,13 +106,40 @@ export function calcMaxLoan({
 
   // 2) DSR 기준 한도: (연소득×40% − 기존상환액) / 스트레스 적용 단위상환액
   const sRate = rate + stressRate(regulated);
-  const perUnit = annualPaymentPerUnit(sRate, termYears);
+  const perUnitStress = annualPaymentPerUnit(sRate, termYears);
   const dsrBudget = annualIncome * DSR_LIMIT - existingAnnualDebt;
-  const dsrLimit = Math.max(0, dsrBudget / perUnit);
+  const dsrLimit = Math.max(0, dsrBudget / perUnitStress);
 
   // 3) 최종 = 둘 중 작은 값
   const maxLoan = Math.max(0, Math.min(ltvLimit, dsrLimit));
   const binding = ltvLimit <= dsrLimit ? "LTV" : "DSR";
+
+  // 4) 부대비용(취득세·중개보수·등기 등)을 필요 자기자금에 포함.
+  //    ⚠️ requiredCash는 마커 색칠·리스트 여유 배지·평형 카드가 전부 공유하는 단일 소스다.
+  //    여기만 바뀌면 전 화면에 자동 전파된다 — 호출부에서 따로 더하지 말 것.
+  const acquisitionCost = calcAcquisitionCost({
+    price, area, householdType, isFirstTime, regulated,
+  });
+  const requiredCash = Math.max(0, Math.round(price - maxLoan)) + acquisitionCost.total;
+
+  // 5) 실제로 **필요한** 대출액 = 집값 + 부대비용 − 자기자금.
+  //    ⚠️ maxLoan으로 클램프하지 말 것. 한도를 넘어가는 것 자체가 "자금 부족" 신호이고,
+  //    gap 판정과의 일치성이 여기서 나온다:
+  //      gap ≥ 0 ⟺ assets ≥ price + 비용 − maxLoan ⟺ maxLoan ≥ neededLoan
+  //    (클램프하면 이 부등식이 항상 참이 되어 교차검증이 죽는다 — 2026-07-25 테스트가 잡음)
+  const neededLoan = Math.max(0, price + acquisitionCost.total - assets);
+
+  // 6) 실제로 **받게 될** 대출 = 필요액과 한도 중 작은 쪽. 월납·DSR은 이 금액 기준이다
+  //    (자금이 부족한 경우엔 "한도까지 빌렸을 때"의 월납을 보여주는 게 맞다).
+  const plannedLoan = Math.min(neededLoan, maxLoan);
+
+  // 7) 월 원리금은 **실제 금리**(현금흐름), DSR은 **스트레스 금리**(규제 심사).
+  //    둘이 다른 게 정상 — HelpModal에서 설명한다.
+  const monthlyPayment = (plannedLoan * annualPaymentPerUnit(rate, termYears)) / 12;
+  const dsrRatio =
+    annualIncome > 0
+      ? (plannedLoan * perUnitStress + existingAnnualDebt) / annualIncome
+      : null;
 
   return {
     regulated,
@@ -113,7 +147,11 @@ export function calcMaxLoan({
     dsrLimit: Math.round(dsrLimit),
     maxLoan: Math.round(maxLoan),
     binding,
-    requiredCash: Math.max(0, Math.round(price - maxLoan)),
-    affordable: maxLoan >= price, // (자기자금 0 가정 시) 대출만으로 가능 여부 — 보통 false
+    acquisitionCost,
+    requiredCash,
+    neededLoan: Math.round(neededLoan),
+    plannedLoan: Math.round(plannedLoan),
+    monthlyPayment: Math.round(monthlyPayment),
+    dsrRatio,
   };
 }
