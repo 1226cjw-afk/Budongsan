@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { REGIONS, ALL_REGIONS, regionName } from "../lib/regions";
 import { calcMaxLoan, isRegulated } from "../lib/loanPolicy";
 import { C } from "../lib/palette";
-import { daysUntil, leaseLabel, formatManwon, shortDate, formatAgo } from "../lib/format";
+import { daysUntil, leaseLabel, formatManwon, shortDate, formatAgo, monthsToLabel } from "../lib/format";
 import { favKey, distMeters, summarize, groupByPyeong, filterTrades } from "../lib/tradeStats";
 import { naverLandUrl } from "../lib/naverLand";
 import TrendChart from "./TrendChart";
@@ -78,6 +78,7 @@ const DEFAULT_PROFILE = {
   assets: "",        // 보유자산(여유 현금)
   income: "",        // 연소득
   existingDebt: "",  // 기존 대출 연 원리금상환액
+  monthlySaving: "", // 월 저축 가능액 — "얼마 더 모으면 되나" 계산용(선택)
   householdType: "무주택", // 무주택 | 1주택 | 다주택
   isFirstTime: false,      // 생애최초 구입
   rate: "4",         // 실제 대출금리(%)
@@ -1014,6 +1015,17 @@ export default function KakaoMap() {
               <input type="number" value={profile.existingDebt} onChange={(e) => updateProfile({ existingDebt: e.target.value })} placeholder="0" style={fieldInput} />
             </label>
             <label style={fieldRow}>
+              <span style={fieldLabel}>월 저축액</span>
+              <input
+                type="number"
+                value={profile.monthlySaving}
+                onChange={(e) => updateProfile({ monthlySaving: e.target.value })}
+                placeholder="선택"
+                style={fieldInput}
+                title="입력하면 자금이 부족한 평형에 '얼마나 더 모으면 되는지'가 표시됩니다"
+              />
+            </label>
+            <label style={fieldRow}>
               <span style={fieldLabel}>가구유형</span>
               <select value={profile.householdType} onChange={(e) => updateProfile({ householdType: e.target.value })} style={fieldInput}>
                 <option value="무주택">무주택</option>
@@ -1342,9 +1354,29 @@ export default function KakaoMap() {
 
                         {assets > 0 && (
                           <div style={{ fontSize: 12, fontWeight: 700, marginTop: 3, color: gap >= 0 ? C.green : C.red }}>
-                            {gap >= 0
-                              ? `✓ 매수 가능 · 여유 ${formatManwon(gap)}`
-                              : `✗ 자금 부족 ${formatManwon(-gap)}`}
+                            {gap >= 0 ? (
+                              `✓ 매수 가능 · 여유 ${formatManwon(gap)}`
+                            ) : (
+                              <>
+                                {`✗ 자금 부족 ${formatManwon(-gap)}`}
+                                {(() => {
+                                  // 현재 시세 기준 단순 나눗셈. 집값 상승·금리 변동은 반영하지 않는다
+                                  // — 가정을 늘리면 숫자만 그럴듯해지고 신뢰도는 떨어진다.
+                                  const save = Number(profile.monthlySaving) || 0;
+                                  if (save <= 0) return null;
+                                  const label = monthsToLabel(-gap / save);
+                                  if (!label) return null;
+                                  return (
+                                    <span
+                                      style={{ fontWeight: 500, color: C.sub }}
+                                      title="현재 시세 기준 단순 계산입니다. 집값 변동은 반영하지 않습니다."
+                                    >
+                                      {` · 월 ${save.toLocaleString()}만 저축 시 ${label}`}
+                                    </span>
+                                  );
+                                })()}
+                              </>
+                            )}
                           </div>
                         )}
                       </div>

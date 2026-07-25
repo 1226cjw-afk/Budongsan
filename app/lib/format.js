@@ -44,3 +44,14 @@ export function formatAgo(iso) {
   if (hr < 24) return `${hr}시간 전`;
   return `${Math.floor(hr / 24)}일 전`;
 }
+
+// 개월 수 → 사람이 읽는 기간. 10년을 넘으면 숫자가 무의미해 뭉뚱그린다.
+export function monthsToLabel(months) {
+  if (!Number.isFinite(months) || months <= 0) return null;
+  const m = Math.ceil(months);
+  if (m > 120) return "10년 이상";
+  if (m < 12) return `약 ${m}개월`;
+  const y = Math.floor(m / 12);
+  const rest = m % 12;
+  return rest ? `약 ${y}년 ${rest}개월` : `약 ${y}년`;
+}
