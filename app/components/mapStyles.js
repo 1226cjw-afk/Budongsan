@@ -216,6 +216,30 @@ export const linkBtn = {
   cursor: "pointer", padding: 0, fontSize: 12,
 };
 
+// 부대비용 내역 (평형 카드 안에서 접힘/펼침).
+export const costToggle = {
+  border: "none", background: "none", color: C.blue, fontSize: 11,
+  fontWeight: 600, cursor: "pointer", padding: 0, textAlign: "left",
+};
+export const costTable = {
+  marginTop: 6, padding: "7px 9px", background: "#f8fafc",
+  borderWidth: 1, borderStyle: "solid", borderColor: C.divider,
+  borderRadius: 9, fontSize: 11, color: C.sub,
+};
+export const costRow = {
+  display: "flex", justifyContent: "space-between", padding: "2px 0",
+};
+export const monthlyLine = {
+  fontSize: 12, color: C.sub, marginTop: 3,
+  fontVariantNumeric: "tabular-nums",
+};
+// 부대비용 반영으로 필요자금이 늘어난 것을 최초 1회 알린다.
+export const migrateNotice = {
+  padding: "9px 11px", background: "#fffbeb",
+  borderWidth: 1, borderStyle: "solid", borderColor: "#fde68a",
+  borderRadius: 10, fontSize: 11, color: "#92400e", lineHeight: 1.5,
+};
+
 export const modalOverlay = {
   position: "fixed", inset: 0, zIndex: 50, background: "rgba(15,23,42,0.40)",
   backdropFilter: "blur(4px)", WebkitBackdropFilter: "blur(4px)",

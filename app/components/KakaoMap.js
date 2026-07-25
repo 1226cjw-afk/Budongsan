@@ -19,6 +19,7 @@ import {
   mobileListSheet, closeBtn, starBtn, sectionLabel, newsLink, naverLandLink,
   ownedBtn, ownedBtnOn, ownedBox, ownedClearBtn, noticeBox, pyeongCard, pyeongCardOn, loanRow,
   basisToggle, basisBtn, basisBtnOn, helpBtn, bindingTag, regBadge, nonRegBadge, linkBtn,
+  costToggle, costTable, costRow, monthlyLine, migrateNotice,
 } from "./mapStyles";
 
 // 카카오맵 + 국토부 실거래가. 지도 이동 시 중심 지역을 자동 인식해 그 시군구 데이터를 로드하고,
@@ -62,6 +63,7 @@ const SORT_GAP = { v: "gap", label: "✓ 자금 여유순" }; // 내 자금 설�
 
 // 대출 계산용 내 자금 프로필. 단위: 만원(보유자산/연소득/기존상환액), % (금리), 년(만기).
 const PROFILE_KEY = "re_loan_profile";
+const COST_NOTICE_KEY = "re_cost_notice_seen"; // 부대비용 반영 안내를 본 적 있는지
 const DEFAULT_PROFILE = {
   assets: "",        // 보유자산(여유 현금)
   income: "",        // 연소득
@@ -107,6 +109,8 @@ export default function KakaoMap() {
   const [showProfile, setShowProfile] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
   const [priceBasis, setPriceBasis] = useState("recent"); // recent | avg
+  const [showCost, setShowCost] = useState(null); // 부대비용 내역 펼친 평형(m2) | null
+  const [showCostNotice, setShowCostNotice] = useState(false);
   const [isMobile, setIsMobile] = useState(false); // 좁은 화면 → 패널을 시트/상단바로
 
   // 단지 리스트 패널 (네이버식) — tradesData는 dataRef와 같은 내용의 반응형 사본(리스트 파생용).
@@ -173,7 +177,7 @@ export default function KakaoMap() {
   const assets = (Number(profile.assets) || 0) + ownedNet;
   const regulated = isRegulated(lawdCd);
 
-  function loanForPrice(price) {
+  function loanForPrice(price, m2 = 0) {
     if (!hasProfile || !price) return null;
     return calcMaxLoan({
       price,
@@ -184,6 +188,8 @@ export default function KakaoMap() {
       existingAnnualDebt: Number(profile.existingDebt) || 0,
       rate: (Number(profile.rate) || 0) / 100,
       termYears: Number(profile.termYears) || 40,
+      area: m2,   // 농특세(85㎡ 초과) 판정
+      assets,     // neededLoan·월납 계산 기준
     });
   }
 
@@ -193,7 +199,7 @@ export default function KakaoMap() {
     let gap = null;
     for (const g of groupByPyeong(hits)) {
       const gp = priceBasis === "recent" ? g.recentAmount : g.avg;
-      const ln = loanForPrice(gp);
+      const ln = loanForPrice(gp, g.m2);
       if (ln && ln.maxLoan > 0) {
         const d = assets - ln.requiredCash;
         if (gap == null || d > gap) gap = d;
@@ -285,6 +291,26 @@ export default function KakaoMap() {
       /* 무시 */
     }
   }, []);
+
+  // 부대비용 반영 안내 — 자금을 설정해 둔 기존 사용자에게만, 최초 1회.
+  // 필요자금이 갑자기 커 보여 "고장났나" 싶은 것을 막는다.
+  useEffect(() => {
+    if (!hasProfile) return;
+    try {
+      if (!localStorage.getItem(COST_NOTICE_KEY)) setShowCostNotice(true);
+    } catch {
+      /* 무시 */
+    }
+  }, [hasProfile]);
+
+  function dismissCostNotice() {
+    setShowCostNotice(false);
+    try {
+      localStorage.setItem(COST_NOTICE_KEY, "1");
+    } catch {
+      /* 무시 */
+    }
+  }
 
   function updateProfile(patch) {
     setProfile((p) => {
@@ -867,6 +893,15 @@ export default function KakaoMap() {
             🔄 갱신
           </button>
         </div>
+        {showCostNotice && (
+          <div style={migrateNotice}>
+            필요자금에 <b>취득세·중개보수·등기비</b>가 반영되도록 개선했습니다.
+            이전보다 필요자금이 커 보이는 게 정상이에요.
+            <button onClick={dismissCostNotice} style={{ ...linkBtn, marginLeft: 6, fontSize: 11 }}>
+              확인
+            </button>
+          </div>
+        )}
         {hasProfile && assets > 0 && (
           <div style={legendRow}>
             <span style={legendItem}><span style={{ ...legendDot, background: C.green }} />구매가능</span>
@@ -1217,6 +1252,58 @@ export default function KakaoMap() {
                           </span>
                           <span>필요자금 <b style={{ color: C.text }}>{formatManwon(ln.requiredCash)}</b></span>
                         </div>
+
+                        {/* 월납은 실제 금리 기준 현금흐름. DSR은 스트레스 금리 기준 규제 수치라 다르다. */}
+                        <div style={monthlyLine}>
+                          월 <b style={{ color: C.text }}>{ln.monthlyPayment.toLocaleString()}만원</b>
+                          {ln.dsrRatio != null && (
+                            <span style={{ color: C.muted }}>
+                              {" · DSR "}{Math.round(ln.dsrRatio * 100)}%
+                            </span>
+                          )}
+                        </div>
+
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation(); // 카드 클릭(추세 선택기)과 충돌 방지
+                            setShowCost((v) => (v === g.m2 ? null : g.m2));
+                          }}
+                          style={costToggle}
+                        >
+                          {showCost === g.m2 ? "▾" : "▸"} 부대비용 {formatManwon(ln.acquisitionCost.total)} 내역
+                        </button>
+                        {showCost === g.m2 && (
+                          <div style={costTable} onClick={(e) => e.stopPropagation()}>
+                            <div style={costRow}>
+                              <span>취득세 ({(ln.acquisitionCost.taxRate * 100).toFixed(2)}%)</span>
+                              <span>{formatManwon(ln.acquisitionCost.acquisitionTax)}</span>
+                            </div>
+                            <div style={costRow}>
+                              <span>지방교육세</span>
+                              <span>{formatManwon(ln.acquisitionCost.localEduTax)}</span>
+                            </div>
+                            {ln.acquisitionCost.ruralTax > 0 && (
+                              <div style={costRow}>
+                                <span>농어촌특별세 (85㎡ 초과)</span>
+                                <span>{formatManwon(ln.acquisitionCost.ruralTax)}</span>
+                              </div>
+                            )}
+                            <div style={costRow}>
+                              <span>중개보수 (VAT 포함)</span>
+                              <span>{formatManwon(ln.acquisitionCost.brokerFee)}</span>
+                            </div>
+                            <div style={costRow}>
+                              <span>등기·채권 등 (근사)</span>
+                              <span>{formatManwon(ln.acquisitionCost.registryEtc)}</span>
+                            </div>
+                            {profile.householdType === "다주택" && (
+                              <div style={{ marginTop: 4, color: C.muted, lineHeight: 1.5 }}>
+                                2주택 취득 기준입니다. 3주택 이상이면 취득세율이 12%로 더 높습니다.
+                              </div>
+                            )}
+                          </div>
+                        )}
+
                         {assets > 0 && (
                           <div style={{ fontSize: 12, fontWeight: 700, marginTop: 3, color: gap >= 0 ? C.green : C.red }}>
                             {gap >= 0
