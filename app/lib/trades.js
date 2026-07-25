@@ -106,7 +106,7 @@ const RTMS_CONCURRENCY = 36;
 // 여러 달 원본 거래를 한 번에 → 캐시 1회 일괄 조회, 미스만 제한 병렬 수집 + 배치 저장.
 // 반환: { byYmd: Map(ymd → trades[]), fetchedYmds: 국토부에서 새로 받은 달들,
 //         latestFetched: 가장 최근 fetched_at(ISO)|null — 신선도 표시용, 추가 조회 없이 산출 }
-export async function fetchRawMonths(lawdCd, ymds, { refresh = false } = {}) {
+export async function fetchRawMonths(lawdCd, ymds, { refresh = false, cacheOnly = false } = {}) {
   const byYmd = new Map();
   let latestFetched = null; // 캐시 신선도(가장 최근 fetched_at) — 별도 조회 없이 여기서 산출.
 
@@ -127,6 +127,11 @@ export async function fetchRawMonths(lawdCd, ymds, { refresh = false } = {}) {
   }
 
   const misses = ymds.filter((ymd) => !byYmd.has(ymd));
+
+  // 캐시 전용 모드: 미스가 있어도 국토부를 호출하지 않는다. 브리핑처럼
+  // "이미 cron이 채워둔 것만 빠르게 읽는" 용도 — 응답 지연·API 쿼터 소모를 막는다.
+  if (cacheOnly) return { byYmd, fetchedYmds: [], latestFetched };
+
   const fetchedYmds = [];
   let firstError = null;
   for (let i = 0; i < misses.length; i += RTMS_CONCURRENCY) {
