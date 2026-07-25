@@ -8,6 +8,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { classifyNews, NEWS_CATEGORIES } from "../lib/news";
 import { C, CARD_SHADOW, TRANSITION } from "../lib/palette";
+import Briefing from "../components/Briefing";
 
 const CAT_EMOJI = {
   "매매·시세": "📈", "정책·세금": "🏛️", "대출·금리": "💰",
@@ -113,6 +114,9 @@ export default function NewsPage() {
           매일 아침 6:30 자동 수집 · 수도권(서울·경기·인천) 매매 위주 + 즐겨찾기 지역
           {notice && <span style={noticeText}> — {notice}</span>}
         </div>
+
+        {/* 브리핑은 칩 필터의 영향을 받지 않는 고정 영역 → 전체 목록(withCat)을 넘긴다 */}
+        <Briefing news={withCat} />
 
         {withCat.length > 0 && (
           <div style={chipRow}>
