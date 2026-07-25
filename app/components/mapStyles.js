@@ -16,6 +16,11 @@ export const newsTabLink = {
   fontSize: 11, fontWeight: 600, color: C.blue, textDecoration: "none",
   padding: "3px 9px", background: C.blueSoft, borderRadius: 999, transition: TRANSITION,
 };
+// 브리핑 미확인 개수 — 뉴스 링크에 붙는다.
+export const newsBadge = {
+  marginLeft: 4, padding: "0 5px", borderRadius: 999,
+  background: C.blue, color: "#fff", fontSize: 10, fontWeight: 700,
+};
 export const detailPanel = {
   position: "absolute", top: 14, right: 14, bottom: 14, zIndex: 10, width: 320,
   overflowY: "auto", ...GLASS, background: "rgba(255,255,255,0.94)", padding: "18px 20px",

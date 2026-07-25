@@ -7,6 +7,7 @@ import { C } from "../lib/palette";
 import { daysUntil, leaseLabel, formatManwon, shortDate, formatAgo, monthsToLabel } from "../lib/format";
 import { favKey, distMeters, summarize, groupByPyeong, filterTrades } from "../lib/tradeStats";
 import { naverLandUrl } from "../lib/naverLand";
+import { countNew } from "../lib/briefingSeen";
 import TrendChart from "./TrendChart";
 import HelpModal from "./HelpModal";
 import {
@@ -19,7 +20,7 @@ import {
   mobileListSheet, closeBtn, starBtn, sectionLabel, newsLink, naverLandLink,
   ownedBtn, ownedBtnOn, ownedBox, ownedClearBtn, noticeBox, pyeongCard, pyeongCardOn, loanRow,
   basisToggle, basisBtn, basisBtnOn, helpBtn, bindingTag, regBadge, nonRegBadge, linkBtn,
-  costToggle, costTable, costRow, monthlyLine, migrateNotice,
+  costToggle, costTable, costRow, monthlyLine, migrateNotice, newsBadge,
 } from "./mapStyles";
 
 // 카카오맵 + 국토부 실거래가. 지도 이동 시 중심 지역을 자동 인식해 그 시군구 데이터를 로드하고,
@@ -124,6 +125,7 @@ export default function KakaoMap() {
   const [showCost, setShowCost] = useState(null); // 부대비용 내역 펼친 평형(m2) | null
   const [showCostNotice, setShowCostNotice] = useState(false);
   const [isMobile, setIsMobile] = useState(false); // 좁은 화면 → 패널을 시트/상단바로
+  const [newsNew, setNewsNew] = useState(0); // 브리핑 미확인 단지 수 (📰 배지)
 
   // 단지 리스트 패널 (네이버식) — tradesData는 dataRef와 같은 내용의 반응형 사본(리스트 파생용).
   const [tradesData, setTradesData] = useState(null);
@@ -297,6 +299,20 @@ export default function KakaoMap() {
   useEffect(() => {
     loadFavorites();
   }, []);
+
+  // 브리핑 미확인 개수 — 📰 배지용. 캐시 전용 라우트라 가볍고, 실패하면 배지만 생략한다.
+  // ready 이후에 걸어 지도 초기 로드를 지연시키지 않는다.
+  useEffect(() => {
+    if (!ready) return;
+    let alive = true;
+    fetch("/api/briefing")
+      .then((r) => r.json())
+      .then((d) => alive && setNewsNew(countNew(d.complexes)))
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [ready]);
 
   // 내 자금 프로필 복원(로컬 저장).
   useEffect(() => {
@@ -848,7 +864,9 @@ export default function KakaoMap() {
       <div style={controlPanelStyle}>
         <div style={{ ...panelTitle, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           <span>🏠 실거래 · 대출 비교</span>
-          <a href="/news" style={newsTabLink}>📰 뉴스</a>
+          <a href="/news" style={newsTabLink}>
+            📰 뉴스{newsNew > 0 && <span style={newsBadge}>{newsNew}</span>}
+          </a>
         </div>
 
         <select
