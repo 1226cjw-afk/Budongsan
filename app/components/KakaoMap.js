@@ -47,6 +47,16 @@ const PRICE_FILTERS = [
   { value: "p4", label: "9~12억", min: 90000, max: 120000 },
 ];
 
+// 월 상환액 상한 필터(만원/월). 자금 프로필(연소득)이 있어야 계산되므로 그때만 노출한다.
+// 사람이 감당 여부를 판단하는 실제 단위가 "월 얼마"라 가격 구간보다 직관적이다.
+const MONTHLY_FILTERS = [
+  { value: "all", label: "월상환 무관", max: Infinity },
+  { value: "m100", label: "월 100만 이하", max: 100 },
+  { value: "m150", label: "월 150만 이하", max: 150 },
+  { value: "m200", label: "월 200만 이하", max: 200 },
+  { value: "m300", label: "월 300만 이하", max: 300 },
+];
+
 // 리스트 패널: 배지·정렬 기준.
 const HOT_PCT = 15; // 1년 상승률 이 값 이상이면 🔥 급등 배지(핀에도 표시)
 const EXCESS_HOT_PCT = 10; // 지역 중앙값 대비 초과상승 이 값(%p) 이상이면 선반영 경고 톤
@@ -96,6 +106,7 @@ export default function KakaoMap() {
   const [lawdCd, setLawdCd] = useState(DEFAULT_CODE);
   const [area, setArea] = useState("all");
   const [price, setPrice] = useState("all");
+  const [monthly, setMonthly] = useState("all"); // 월 상환액 상한
   const [loading, setLoading] = useState(false);
   const [lastUpdated, setLastUpdated] = useState(null); // 캐시 갱신 시각(ISO)
   const [selected, setSelected] = useState(null);
@@ -193,19 +204,23 @@ export default function KakaoMap() {
     });
   }
 
-  // 한 단지에서 대출 가능한 평형 중 최대 자금 여유(보유자산 − 필요자금, 만원). 전 평형 대출 불가면 null.
+  // 한 단지에서 "대출 가능 + 월납 상한 이내"인 평형 중 자금 여유가 최대인 것.
+  // 반환 {gap, monthly} — 조건을 만족하는 평형이 없으면 null.
   // priceBasis(최근/평균) 기준가 사용. 마커 색칠(여유 ≥ 0 = 초록)과 리스트 여유 배지·정렬이 이 계산을 공유.
-  function bestGap(hits) {
-    let gap = null;
+  // ⚠️ gap과 monthly는 반드시 **같은 평형**에서 나와야 한다. 평형을 넘나들며 고르면
+  //    "A평형은 살 수 있고 B평형은 월납이 싸다"는 이유로 못 사는 단지가 통과한다.
+  function bestFit(hits) {
+    const cap = (MONTHLY_FILTERS.find((m) => m.value === monthly) ?? MONTHLY_FILTERS[0]).max;
+    let best = null;
     for (const g of groupByPyeong(hits)) {
       const gp = priceBasis === "recent" ? g.recentAmount : g.avg;
       const ln = loanForPrice(gp, g.m2);
-      if (ln && ln.maxLoan > 0) {
-        const d = assets - ln.requiredCash;
-        if (gap == null || d > gap) gap = d;
-      }
+      if (!ln || ln.maxLoan <= 0) continue;
+      if (ln.monthlyPayment > cap) continue;
+      const d = assets - ln.requiredCash;
+      if (!best || d > best.gap) best = { gap: d, monthly: ln.monthlyPayment };
     }
-    return gap;
+    return best;
   }
 
   // 지도 초기화 (1회) — services 라이브러리로 좌표→지역 변환 + 빈 곳 클릭→가까운 단지.
@@ -378,7 +393,7 @@ export default function KakaoMap() {
     if (dataRef.current.lawdCd !== lawdCd) return;
     renderMarkers();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [area, price, favorites, profile, priceBasis, rank]);
+  }, [area, price, monthly, favorites, profile, priceBasis, rank]);
 
   // 단지 바뀌면 추세를 '가장 거래 많은 평형'으로 초기화. 추세는 평형별만 본다
   // (전체는 평형이 섞여 시세가 들쭉날쭉 → 추세 의미가 흐려짐).
@@ -547,8 +562,8 @@ export default function KakaoMap() {
         // 구매가능: 어떤 평형이든 보유자산으로 필요자금을 댈 수 있으면(최대 여유 ≥ 0) true.
         let buyable = null;
         if (affordMode) {
-          const gap = bestGap(hits);
-          buyable = gap != null && gap >= 0;
+          const fit = bestFit(hits);
+          buyable = fit != null && fit.gap >= 0;
         }
         if (buyable) buyableCount += 1;
 
@@ -589,7 +604,12 @@ export default function KakaoMap() {
       fitRef.current = false;
     }
 
-    const tags = [area === "all" ? null : aB.label, price === "all" ? null : pB.label]
+    const mB = MONTHLY_FILTERS.find((m) => m.value === monthly) ?? MONTHLY_FILTERS[0];
+    const tags = [
+      area === "all" ? null : aB.label,
+      price === "all" ? null : pB.label,
+      monthly === "all" ? null : mB.label,
+    ]
       .filter(Boolean)
       .join(" · ");
     const buyTag = affordMode && shownComplexes ? ` · 🟢 구매가능 ${buyableCount}/${shownComplexes}곳` : "";
@@ -613,7 +633,8 @@ export default function KakaoMap() {
       const hits = filterTrades(c.trades, aB, pB);
       const stat = summarize(hits);
       if (!stat) continue;
-      const gap = affordMode ? bestGap(hits) : null; // 마커 색칠과 같은 계산(bestGap) 공유
+      const fit = affordMode ? bestFit(hits) : null; // 마커 색칠과 같은 계산(bestFit) 공유
+      const gap = fit ? fit.gap : null;
       const key = favKey(tradesData.lawdCd, c.umdNm, c.aptNm);
       const buildYear = Number(hits[0]?.buildYear) || null;
       rows.push({
@@ -625,7 +646,7 @@ export default function KakaoMap() {
         buildYear,
         rebuild: buildYear != null && thisYear - buildYear >= REBUILD_AGE,
         gap,
-        noLoan: affordMode && gap == null, // 다주택 규제 등으로 전 평형 대출 불가
+        noLoan: affordMode && gap == null, // 대출 불가(다주택 규제 등) 또는 월납 상한 초과
         buyable: gap != null && gap >= 0,
         isFav: favSet.has(key),
         households: householdMap.get(key) ?? null,
@@ -642,7 +663,7 @@ export default function KakaoMap() {
     }[sortBy];
     return cmp ? filtered.sort(cmp) : filtered;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tradesData, area, price, priceBasis, rank, profile, sortBy, onlyBuyable, favSet, householdMap]);
+  }, [tradesData, area, price, monthly, priceBasis, rank, profile, sortBy, onlyBuyable, favSet, householdMap]);
 
   // 리스트 상위 N개 행의 세대수 lazy 조회(/api/complex-info POST 일괄 — 서버가 kapt_cache 조회).
   useEffect(() => {
@@ -719,6 +740,7 @@ export default function KakaoMap() {
     if (!affordMode) {
       if (sortBy === "gap") setSortBy("yoy");
       if (onlyBuyable) setOnlyBuyable(false);
+      if (monthly !== "all") setMonthly("all");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [affordMode]);
@@ -855,6 +877,20 @@ export default function KakaoMap() {
             ))}
           </select>
         </div>
+
+        {affordMode && (
+          <select
+            value={monthly}
+            onChange={(e) => setMonthly(e.target.value)}
+            disabled={loading}
+            style={selectStyle}
+            title="월 원리금 상환액 상한으로 거르기"
+          >
+            {MONTHLY_FILTERS.map((m) => (
+              <option key={m.value} value={m.value}>{m.label}</option>
+            ))}
+          </select>
+        )}
 
         <div style={{ display: "flex", gap: 8 }}>
           <button
