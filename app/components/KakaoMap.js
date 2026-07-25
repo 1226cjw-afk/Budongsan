@@ -10,6 +10,7 @@ import { naverLandUrl } from "../lib/naverLand";
 import { countNew } from "../lib/briefingSeen";
 import TrendChart from "./TrendChart";
 import HelpModal from "./HelpModal";
+import { MobileTopBar, MobileSheet } from "./MobileShell";
 import {
   controlPanel, panelTitle, newsTabLink, detailPanel, selectStyle, pillBtn, pillBtnOn,
   statusText, refreshBtn, hintLine, hintText, legendRow, legendItem, legendDot,
@@ -17,7 +18,7 @@ import {
   favRow, favEditBtn, favDdayLine, favEditBox, favSaveBtn,
   sortBar, sortSelect, onlyBuyLabel, listScroll, rowTop, rowName, rowPrice, rowSub, rowBadges,
   hotBadge, upBadge, downBadge, rebuildBadge, gapOkBadge, gapNoBadge, excessBadge, excessHotBadge,
-  mobileListSheet, closeBtn, starBtn, sectionLabel, newsLink, naverLandLink,
+  closeBtn, starBtn, sectionLabel, newsLink, naverLandLink,
   ownedBtn, ownedBtnOn, ownedBox, ownedClearBtn, noticeBox, pyeongCard, pyeongCardOn, loanRow,
   basisToggle, basisBtn, basisBtnOn, helpBtn, bindingTag, regBadge, nonRegBadge, linkBtn,
   costToggle, costTable, costRow, monthlyLine, migrateNotice, newsBadge,
@@ -132,7 +133,9 @@ export default function KakaoMap() {
   const [rank, setRank] = useState(new Map()); // `${umd}|${apt}` → {yoyPct, recentN, pastN}
   const [sortBy, setSortBy] = useState("yoy");
   const [onlyBuyable, setOnlyBuyable] = useState(false); // 구매가능 단지만 (자금 설정 시)
-  const [showList, setShowList] = useState(false); // 모바일 목록 시트 (데스크톱은 항상 표시)
+  // 모바일 하단 시트 슬롯 — null|"settings"|"list"|"detail". 한 번에 하나만 열린다.
+  // (데스크톱은 좌측 패널에 컨트롤+리스트가 항상 보이므로 이 상태를 쓰지 않는다.)
+  const [sheet, setSheet] = useState(null);
   const [householdMap, setHouseholdMap] = useState(new Map()); // favKey → 세대수|null (lazy)
   const infoInflightRef = useRef(new Set()); // 세대수 조회 중복 방지
 
@@ -159,6 +162,14 @@ export default function KakaoMap() {
   useEffect(() => {
     lawdCdRef.current = lawdCd;
   }, [lawdCd]);
+
+  // 모바일: 단지가 선택되면 세부 시트로 전환한다. 슬롯이 하나라 설정·목록 시트는
+  // 자동으로 닫히고, 따라서 상단 바와 겹칠 패널이 애초에 존재하지 않는다.
+  useEffect(() => {
+    if (!isMobile) return;
+    if (selected) setSheet("detail");
+    else setSheet((s) => (s === "detail" ? null : s));
+  }, [selected, isMobile]);
 
   const detail = useMemo(() => {
     if (!selected) return null;
@@ -725,7 +736,6 @@ export default function KakaoMap() {
   // 리스트 행 클릭 → 단지 선택 + 지도 이동(자동맞춤 없이 그 위치로).
   function selectComplex(c) {
     setSelected(c);
-    if (isMobile) setShowList(false);
     if (c.lat != null && mapRef.current) {
       fitRef.current = false;
       mapRef.current.panTo(new window.kakao.maps.LatLng(c.lat, c.lng));
@@ -841,33 +851,37 @@ export default function KakaoMap() {
     </>
   );
 
-  // 모바일: 컨트롤은 상단 전체폭 바, 세부패널은 하단 시트(지도 상단부가 보이도록).
-  // 데스크톱: 좌측 패널이 컨트롤+단지 리스트(네이버식)로 전체 높이.
+  // 모바일: 상단은 1줄 바(MobileTopBar), 컨트롤·목록·세부는 전부 하단 시트 하나로.
+  //   시트 슬롯이 단일 상태(sheet)라 동시에 둘 이상 열릴 수 없다 = 겹침 구조적 불가.
+  //   패널 자체는 시트 안의 콘텐츠가 되므로 위치·배경·그림자를 벗긴다.
+  // 데스크톱: 좌측 패널이 컨트롤+단지 리스트(네이버식)로 전체 높이. 변경 없음.
+  const bare = {
+    position: "static", width: "auto", padding: 0,
+    background: "none", boxShadow: "none", border: "none",
+  };
   const controlPanelStyle = isMobile
-    ? { ...controlPanel, left: 8, right: 8, top: 8, width: "auto", padding: 11, gap: 8 }
+    ? { ...controlPanel, ...bare, borderRadius: 0 }
     : { ...controlPanel, bottom: 14, width: 340, overflow: "hidden" };
   const detailPanelStyle = isMobile
-    ? {
-        ...detailPanel,
-        top: "auto", left: 0, right: 0, bottom: 0, width: "auto",
-        maxHeight: "60vh", borderRadius: "20px 20px 0 0",
-        padding: "16px 16px calc(18px + env(safe-area-inset-bottom))",
-        boxShadow: "0 -1px 2px rgba(15,23,42,0.04), 0 -8px 32px rgba(15,23,42,0.16)",
-      }
+    ? { ...detailPanel, ...bare, overflowY: "visible" }
     : detailPanel;
 
-  return (
-    <div style={{ position: "relative", width: "100%", height: "100vh" }}>
-      <div ref={containerRef} style={{ width: "100%", height: "100%" }} />
+  // ⚠️ status 전문(필터 태그·구매가능 수 포함)은 1줄 바에 안 들어간다 → 짧은 버전.
+  const shortSummary = tradesData
+    ? `${regionLabel} · ${listRows ? listRows.length : 0}곳`
+    : regionLabel;
+  const hasFilter = area !== "all" || price !== "all" || monthly !== "all";
 
-      {/* 좌측 상단 컨트롤 (모바일: 상단 전체폭 바) */}
-      <div style={controlPanelStyle}>
+  const controlPanelContent = (
+    <>
+      {!isMobile && (
         <div style={{ ...panelTitle, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           <span>🏠 실거래 · 대출 비교</span>
           <a href="/news" style={newsTabLink}>
             📰 뉴스{newsNew > 0 && <span style={newsBadge}>{newsNew}</span>}
           </a>
         </div>
+      )}
 
         <select
           value={lawdCd}
@@ -926,7 +940,7 @@ export default function KakaoMap() {
           </button>
           {isMobile && (
             <button
-              onClick={() => { setShowList(true); setShowFavs(false); setShowProfile(false); }}
+              onClick={() => { setSheet("list"); setShowFavs(false); setShowProfile(false); }}
               style={pillBtn}
             >
               📋 목록
@@ -1134,24 +1148,18 @@ export default function KakaoMap() {
           </div>
         )}
 
-        {!isMobile && listContent}
-      </div>
+    </>
+  );
 
-      {/* 모바일 단지 목록 시트 */}
-      {isMobile && showList && (
-        <div style={mobileListSheet}>
-          <button onClick={() => setShowList(false)} style={closeBtn} aria-label="닫기">×</button>
-          <div style={{ fontSize: 13, fontWeight: 700, color: C.text, paddingRight: 24 }}>
-            📋 {regionLabel} 단지 목록
-          </div>
-          {listContent}
-        </div>
+  // ⚠️ `selected && detail &&` 가드 필수 — JSX는 변수로 만드는 순간 children 표현식이
+  // 평가되므로, 가드 없이 두면 selected가 null일 때 `selected.aptNm`이 터진다
+  // (예전엔 렌더 안 `{selected && detail && (...)}`에 감싸여 있어 문제가 없었다).
+  const detailContent = selected && detail && (
+    <>
+      {/* 모바일 시트에서는 백드롭 탭·그립으로 닫는다. closeBtn은 absolute라 시트에서 좌표가 어긋남. */}
+      {!isMobile && (
+        <button onClick={() => setSelected(null)} style={closeBtn} aria-label="닫기">×</button>
       )}
-
-      {/* 우측 세부정보 패널 (모바일: 하단 시트) */}
-      {selected && detail && (
-        <div style={detailPanelStyle}>
-          <button onClick={() => setSelected(null)} style={closeBtn} aria-label="닫기">×</button>
           <div style={{ display: "flex", alignItems: "flex-start", gap: 8, paddingRight: 24 }}>
             <div style={{ flex: 1 }}>
               <div style={{ fontSize: 17, fontWeight: 700, color: C.text, lineHeight: 1.25 }}>{selected.aptNm}</div>
@@ -1403,8 +1411,58 @@ export default function KakaoMap() {
                 </div>
               );
             })}
+      </div>
+    </>
+  );
+
+  return (
+    <div style={{ position: "relative", width: "100%", height: "100vh" }}>
+      <div ref={containerRef} style={{ width: "100%", height: "100%" }} />
+
+      {isMobile ? (
+        <>
+          <MobileTopBar
+            summary={shortSummary}
+            hasFilter={hasFilter}
+            onOpenSettings={() => setSheet("settings")}
+            newsNew={newsNew}
+          />
+          <MobileSheet
+            open={sheet != null}
+            onClose={() => {
+              if (sheet === "detail") setSelected(null); // effect가 sheet도 null로 되돌린다
+              else setSheet(null);
+            }}
+          >
+            {sheet === "settings" && (
+              <>
+                {controlPanelContent}
+                <button onClick={() => setSheet("list")} style={pillBtn}>
+                  📋 단지 목록 보기
+                </button>
+              </>
+            )}
+            {sheet === "list" && (
+              <>
+                <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>
+                  📋 {regionLabel} 단지 목록
+                </div>
+                {listContent}
+              </>
+            )}
+            {sheet === "detail" && detailContent && (
+              <div style={detailPanelStyle}>{detailContent}</div>
+            )}
+          </MobileSheet>
+        </>
+      ) : (
+        <>
+          <div style={controlPanelStyle}>
+            {controlPanelContent}
+            {listContent}
           </div>
-        </div>
+          {detailContent && <div style={detailPanelStyle}>{detailContent}</div>}
+        </>
       )}
 
       {showHelp && <HelpModal onClose={() => setShowHelp(false)} />}
