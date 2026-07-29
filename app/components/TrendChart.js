@@ -1,4 +1,6 @@
-// 월별 시세 추세 라인차트(SVG) + 좌측 Y축 가격 눈금. series: [{ymd, avg, count}] 과거→현재.
+// 월별 시세 추세 라인차트(SVG) + 좌측 Y축 가격 눈금.
+// series: [{ymd, value, avg, count}] 과거→현재. 그리는 값은 **중앙값(value)** —
+// 한 평형의 월 거래가 1~3건이라 평균은 특수거래 하나에 크게 흔들린다(/api/trend 주석 참조).
 
 import { C } from "../lib/palette";
 import { hintText } from "./mapStyles";
@@ -9,7 +11,7 @@ function eokLabel(manwon) {
 }
 
 export default function TrendChart({ series, areaLabel }) {
-  const pts = series.filter((s) => s.avg != null);
+  const pts = series.filter((s) => s.value != null);
   if (pts.length < 2) {
     return (
       <div style={hintText}>{areaLabel ? `${areaLabel} ` : ""}추세를 그릴 거래가 부족합니다.</div>
@@ -18,7 +20,7 @@ export default function TrendChart({ series, areaLabel }) {
   const W = 280, H = 116, AX = 44, PADX = 8, PADTOP = 8, PADBOT = 18;
   const plotW = W - AX - PADX;
   const plotH = H - PADTOP - PADBOT;
-  const vals = pts.map((p) => p.avg);
+  const vals = pts.map((p) => p.value);
   const min = Math.min(...vals);
   const max = Math.max(...vals);
   const span = max - min || 1;
@@ -31,7 +33,7 @@ export default function TrendChart({ series, areaLabel }) {
   const first = pts[0];
   const last = pts[pts.length - 1];
   const mid = pts[Math.floor(pts.length / 2)];
-  const up = last.avg >= first.avg;
+  const up = last.value >= first.value;
   const stroke = up ? C.red : C.blue;
   const TICKS = 4;
   const tickVals = Array.from({ length: TICKS + 1 }, (_, k) => min + (span * k) / TICKS);
@@ -48,7 +50,7 @@ export default function TrendChart({ series, areaLabel }) {
         ))}
         <polyline points={line} fill="none" stroke={stroke} strokeWidth="2" />
         {!dense && pts.map((p) => (
-          <circle key={p.ymd} cx={x(idxOf.get(p))} cy={y(p.avg)} r="2.5" fill={stroke} />
+          <circle key={p.ymd} cx={x(idxOf.get(p))} cy={y(p.value)} r="2.5" fill={stroke} />
         ))}
       </svg>
       <div
@@ -60,6 +62,9 @@ export default function TrendChart({ series, areaLabel }) {
         <span>{first.ymd.slice(2, 4)}.{first.ymd.slice(4)}</span>
         {dense && <span>{mid.ymd.slice(2, 4)}.{mid.ymd.slice(4)}</span>}
         <span>{last.ymd.slice(2, 4)}.{last.ymd.slice(4)}</span>
+      </div>
+      <div style={{ ...hintText, marginTop: 2 }}>
+        월별 <b>중앙값</b> · 거래 {pts.reduce((s, p) => s + p.count, 0)}건 (해제·직거래 제외)
       </div>
     </div>
   );

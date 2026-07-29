@@ -20,11 +20,13 @@ export async function GET(request) {
   const ymds = monthsBack(dealYmd, months);
 
   // 1) 각 달 원본 거래 수집(캐시) 후 병합. 신선도(fetchedAt)는 수집 단계에서 함께 산출.
-  let trades, fetchedAt;
+  //    해제·직거래는 fetchRawMonths가 이미 걸러낸 상태로 준다(건수만 excluded로 받아 표기용).
+  let trades, fetchedAt, excluded;
   try {
-    const { byYmd, latestFetched } = await fetchRawMonths(lawdCd, ymds, { refresh });
+    const { byYmd, latestFetched, excluded: ex } = await fetchRawMonths(lawdCd, ymds, { refresh });
     trades = ymds.flatMap((ymd) => byYmd.get(ymd) || []);
     fetchedAt = latestFetched;
+    excluded = ex;
   } catch (e) {
     return Response.json({ error: e.message }, { status: 502 });
   }
@@ -55,6 +57,8 @@ export async function GET(request) {
       umdNm,
       lat: coord?.lat ?? null,
       lng: coord?.lng ?? null,
+      naverName: coord?.placeName || null, // 카카오 정식 단지명 — 네이버 부동산 딥링크용
+
       trades: group,
       maxAmount: Math.max(...amounts),
       minAmount: Math.min(...amounts),
@@ -71,6 +75,8 @@ export async function GET(request) {
     complexCount: complexes.length,
     geocoded: complexes.filter((c) => c.lat != null).length,
     fetchedAt,
+    excluded, // {cancelled, direct} — 시세에서 제외한 해제·직거래 건수
+
     complexes,
   });
 }

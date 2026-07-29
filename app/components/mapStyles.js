@@ -174,6 +174,34 @@ export const sheetGrip = {
   background: C.border, margin: "0 auto 4px",
 };
 
+// ── 지도 위 떠 있는 컨트롤 ──────────────────────────────────
+// 패널·시트 밖에 직접 렌더한다. ⚠️ controlPanelContent에 넣으면 모바일에서 ⚙️ 시트를
+// 열어야만 보인다 — 지도를 보면서 눌러야 하는 버튼이라 시트 밖이어야 한다.
+// ⚠️ 데스크톱에서 right 정렬 금지 — 세부패널(right:14, width:320, 전체높이)이 덮어
+// 클릭이 안 된다(2026-07-29 실측 clickable:false). 좌측 컨트롤 패널(14+340)과 우측
+// 세부패널 사이의 빈 지도 영역에 놓는다. 모바일은 시트가 닫혀 있을 때만 우하단.
+export const locateBtn = {
+  position: "absolute", left: 368, bottom: 24, zIndex: Z.TOPBAR,
+  width: 38, height: 38, borderRadius: "50%",
+  ...GLASS, border: GLASS_BORDER, boxShadow: PANEL_SHADOW,
+  fontSize: 16, lineHeight: 1, cursor: "pointer", color: C.sub,
+  display: "flex", alignItems: "center", justifyContent: "center",
+  transition: TRANSITION,
+};
+// 지도를 밀다 시군구가 바뀌면 조용히 갈아끼우지 않고 알린다 + 되돌릴 기회를 준다.
+export const regionToastBox = {
+  position: "absolute", left: "50%", transform: "translateX(-50%)", zIndex: Z.TOPBAR,
+  ...GLASS, background: "rgba(15,23,42,0.88)", color: "#fff",
+  padding: "8px 12px", borderRadius: 999, boxShadow: PANEL_SHADOW,
+  fontSize: 12, fontWeight: 600, display: "flex", alignItems: "center", gap: 10,
+  whiteSpace: "nowrap", maxWidth: "calc(100% - 28px)",
+};
+export const regionToastBtn = {
+  border: "none", background: "rgba(255,255,255,0.18)", color: "#fff",
+  fontSize: 11, fontWeight: 700, padding: "3px 9px", borderRadius: 999,
+  cursor: "pointer", flex: "0 0 auto",
+};
+
 export const closeBtn = {
   position: "absolute", top: 12, right: 14, border: "none", background: "none",
   fontSize: 22, lineHeight: 1, cursor: "pointer", color: C.muted, zIndex: 1,

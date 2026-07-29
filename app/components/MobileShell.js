@@ -11,10 +11,20 @@ import {
   sheetBackdrop, mobileSheet, sheetGrip, newsBadge,
 } from "./mapStyles";
 
-export function MobileTopBar({ summary, hasFilter, onOpenSettings, newsNew }) {
+// ⚠️ 🔄 갱신은 상단 바에 **직접** 둔다 — ⚙️ 시트 안에만 있으면 매번 시트를 열어야 해서
+// "갱신하려고 설정을 여는" 번거로움이 생긴다(2026-07-29 사용자 요청).
+export function MobileTopBar({ summary, hasFilter, onOpenSettings, onRefresh, refreshing, newsNew }) {
   return (
     <div style={mobileTopBar}>
       <span style={mobileTopText}>{summary}</span>
+      <button
+        onClick={onRefresh}
+        disabled={refreshing}
+        style={mobileTopBtn}
+        aria-label="실거래가 새로 갱신"
+      >
+        {refreshing ? "⏳" : "🔄"}
+      </button>
       <button onClick={onOpenSettings} style={mobileTopBtn} aria-label="지역·필터·자금 설정">
         ⚙️
         {hasFilter && <span style={mobileTopBtnDot} />}

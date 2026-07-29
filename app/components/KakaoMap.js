@@ -22,6 +22,7 @@ import {
   ownedBtn, ownedBtnOn, ownedBox, ownedClearBtn, noticeBox, pyeongCard, pyeongCardOn, loanRow,
   basisToggle, basisBtn, basisBtnOn, helpBtn, bindingTag, regBadge, nonRegBadge, linkBtn,
   costToggle, costTable, costRow, monthlyLine, migrateNotice, newsBadge,
+  locateBtn, regionToastBox, regionToastBtn,
 } from "./mapStyles";
 
 // 카카오맵 + 국토부 실거래가. 지도 이동 시 중심 지역을 자동 인식해 그 시군구 데이터를 로드하고,
@@ -33,12 +34,23 @@ const DEFAULT_CENTER = { lat: 37.3897, lng: 126.9536 }; // 안양 평촌 일대
 const MONTHS = 3; // 지도 마커: 최근 3개월 병합
 const NEAR_CLICK_M = 200; // 지도 빈 곳 클릭 시 이 거리(m) 안의 가장 가까운 단지 선택
 
+// 지도 이동이 멈춘 뒤 이만큼 더 조용해야 지역을 재판정한다. 팬 도중 매 idle마다
+// 지오코더를 때리고 시군구가 바뀔 때마다 전체 재로드가 걸려 지도가 버벅였다.
+const IDLE_SETTLE_MS = 400;
+// 코드가 지도를 옮긴 직후(setBounds·setCenter·panTo) 이 시간 동안은 지역 재판정을 건너뛴다.
+// ⚠️ 이게 없으면 "지역 선택 → 지도가 그 지역으로 이동 → 그 이동의 idle이 다시 지역을 판정"
+//    하는 자기참조 루프가 생겨, 경계에 걸친 지역은 원래 지역으로 되돌아간다.
+const PROGRAMMATIC_MOVE_MS = 1200;
+const VIEW_KEY = "re_map_view"; // 마지막으로 보던 지도 위치(지역·중심·확대) — 재방문 복원용
+
+// 면적 필터. 라벨은 **공급 기준 평형**이 앞(사람이 쓰는 단위) — 경계값은 전용㎡ 그대로다.
+// (60㎡→24평 / 85㎡→34평 / 135㎡→54평, tradeStats.toPyeong 기준)
 const AREA_FILTERS = [
   { value: "all", label: "전체 면적", min: 0, max: Infinity },
-  { value: "s", label: "~60㎡ (~18평)", min: 0, max: 60 },
-  { value: "m", label: "60~85㎡ (18~26평)", min: 60, max: 85 },
-  { value: "l", label: "85~135㎡ (26~41평)", min: 85, max: 135 },
-  { value: "xl", label: "135㎡~ (41평~)", min: 135, max: Infinity },
+  { value: "s", label: "~24평 (전용 60㎡)", min: 0, max: 60 },
+  { value: "m", label: "24~34평 (전용 60~85㎡)", min: 60, max: 85 },
+  { value: "l", label: "34~54평 (전용 85~135㎡)", min: 85, max: 135 },
+  { value: "xl", label: "54평~ (전용 135㎡~)", min: 135, max: Infinity },
 ];
 
 const PRICE_FILTERS = [
@@ -73,6 +85,26 @@ const SORT_OPTIONS = [
 ];
 const SORT_GAP = { v: "gap", label: "✓ 자금 여유순" }; // 내 자금 설정 시에만 노출
 
+// 마지막으로 보던 지도 위치. 새로고침·재방문 시 그 자리에서 이어 보게 한다.
+// ⚠️ localStorage는 클라이언트에만 있으므로 반드시 마운트 이후(지도 초기화 effect)에만 부른다 —
+//    useState 초기값으로 읽으면 서버 렌더와 어긋나 하이드레이션이 깨진다.
+function readSavedView() {
+  try {
+    const v = JSON.parse(localStorage.getItem(VIEW_KEY) || "null");
+    if (!v || !Number.isFinite(v.lat) || !Number.isFinite(v.lng)) return null;
+    return v;
+  } catch {
+    return null;
+  }
+}
+function writeSavedView(v) {
+  try {
+    localStorage.setItem(VIEW_KEY, JSON.stringify(v));
+  } catch {
+    /* 무시 */
+  }
+}
+
 // 대출 계산용 내 자금 프로필. 단위: 만원(보유자산/연소득/기존상환액), % (금리), 년(만기).
 const PROFILE_KEY = "re_loan_profile";
 const COST_NOTICE_KEY = "re_cost_notice_seen"; // 부대비용 반영 안내를 본 적 있는지
@@ -97,12 +129,17 @@ export default function KakaoMap() {
   const containerRef = useRef(null);
   const mapRef = useRef(null);
   const geocoderRef = useRef(null);
-  const overlaysRef = useRef([]);
+  // key → {overlay, el}. 매 렌더마다 전부 파괴/재생성하지 않고 재사용한다 —
+  // 필터 한 번 바꿀 때마다 오버레이 수백 개를 다시 만드느라 지도가 멈칫했다.
+  const overlaysRef = useRef(new Map());
   const dataRef = useRef(null);
   const lawdCdRef = useRef(DEFAULT_CODE); // idle 핸들러가 최신 지역 코드 참조
   const fitRef = useRef(true); // 다음 렌더에서 지도 영역 자동 맞춤 여부
   const favSetRef = useRef(new Set());
   const favoritesRef = useRef([]); // 타지역 즐겨찾기 마커용 — 좌표 포함 전체 목록
+  const suppressIdleRef = useRef(0); // 코드가 지도를 옮긴 시각 — 지역 재판정 억제 창
+  const idleTimerRef = useRef(null); // idle 디바운스 타이머
+  const myLocRef = useRef(null); // 현위치 점 오버레이
 
   const [ready, setReady] = useState(false);
   const [status, setStatus] = useState("지도 로딩 중…");
@@ -127,6 +164,10 @@ export default function KakaoMap() {
   const [showCostNotice, setShowCostNotice] = useState(false);
   const [isMobile, setIsMobile] = useState(false); // 좁은 화면 → 패널을 시트/상단바로
   const [newsNew, setNewsNew] = useState(0); // 브리핑 미확인 단지 수 (📰 배지)
+  const [excluded, setExcluded] = useState(null); // {cancelled, direct} 시세에서 뺀 거래 수
+  const [regionToast, setRegionToast] = useState(null); // 자동 지역 전환 알림 {from, to}
+  const [myLoc, setMyLoc] = useState(null); // 현위치 {lat, lng}
+  const [locating, setLocating] = useState(false);
 
   // 단지 리스트 패널 (네이버식) — tradesData는 dataRef와 같은 내용의 반응형 사본(리스트 파생용).
   const [tradesData, setTradesData] = useState(null);
@@ -177,6 +218,33 @@ export default function KakaoMap() {
     return { overall: summarize(ts), buildYear: ts[0]?.buildYear, groups: groupByPyeong(ts) };
   }, [selected]);
 
+  // 자동 지역 전환 알림은 잠깐만 띄운다(되돌릴 기회만 주고 사라짐).
+  useEffect(() => {
+    if (!regionToast) return;
+    const t = setTimeout(() => setRegionToast(null), 6000);
+    return () => clearTimeout(t);
+  }, [regionToast]);
+
+  // 현위치 점 — 지도에 하나만 유지한다.
+  useEffect(() => {
+    if (!ready || !mapRef.current) return;
+    if (myLocRef.current) {
+      myLocRef.current.setMap(null);
+      myLocRef.current = null;
+    }
+    if (!myLoc) return;
+    const kakao = window.kakao;
+    const el = document.createElement("div");
+    el.className = "my-loc-dot";
+    const ov = new kakao.maps.CustomOverlay({
+      position: new kakao.maps.LatLng(myLoc.lat, myLoc.lng),
+      content: el,
+      zIndex: 1,
+    });
+    ov.setMap(mapRef.current);
+    myLocRef.current = ov;
+  }, [ready, myLoc]);
+
   // 지역 1년 상승률 중앙값 — 선반영 게이지 기준선(단지 상승률 − 중앙값 = 지역 대비 초과상승 %p).
   const rankMedian = useMemo(() => {
     const vals = [...rank.values()].map((r) => r.yoyPct).filter((v) => v != null).sort((a, b) => a - b);
@@ -201,6 +269,14 @@ export default function KakaoMap() {
     : 0;
   const assets = (Number(profile.assets) || 0) + ownedNet;
   const regulated = isRegulated(lawdCd);
+
+  // 마커·리스트 계산에 실제로 영향을 주는 자금 입력만 추린 키(문자열이라 얕은 비교가 통한다).
+  // ⚠️ profile 객체를 그대로 deps에 넣으면 자금 입력창에 **한 글자 칠 때마다** 객체가 새로 만들어져
+  //    마커 수백 개가 통째로 다시 그려진다 — 입력이 끊기는 주된 원인이었다.
+  const loanKey = [
+    assets, incomeNum, profile.existingDebt, profile.rate,
+    profile.termYears, profile.householdType, profile.isFirstTime,
+  ].join("|");
 
   function loanForPrice(price, m2 = 0) {
     if (!hasProfile || !price) return null;
@@ -237,6 +313,50 @@ export default function KakaoMap() {
     return best;
   }
 
+  // 코드가 지도를 옮길 때는 반드시 이걸로 감싼다 — 그 이동이 만든 idle은 지역을 재판정하지 않는다.
+  // (지역 선택 → 지도 이동 → 그 idle이 다시 지역 판정 → 원래 지역으로 되돌림, 이 루프를 끊는다.)
+  function moveMap(fn) {
+    suppressIdleRef.current = Date.now();
+    fn();
+  }
+
+  // 현위치로 이동. initial=true면 첫 방문 자동 호출(실패해도 조용히 넘어간다).
+  function locateMe({ initial = false } = {}) {
+    const map = mapRef.current;
+    if (!map || !navigator.geolocation) return;
+    setLocating(true);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setLocating(false);
+        const kakao = window.kakao;
+        const { latitude: lat, longitude: lng } = pos.coords;
+        setMyLoc({ lat, lng });
+        geocoderRef.current.coord2RegionCode(lng, lat, (res, st) => {
+          const code =
+            st === kakao.maps.services.Status.OK
+              ? ((res.find((x) => x.region_type === "B") || res[0])?.code || "").slice(0, 5)
+              : "";
+          // 서비스 지역(수도권) 밖이면 첫 방문에선 그냥 기본 위치를 유지한다.
+          if (!VALID_CODES.has(code)) {
+            if (!initial) setStatus("현위치가 서비스 지역(수도권) 밖이에요.");
+            return;
+          }
+          fitRef.current = false;
+          moveMap(() => {
+            map.setLevel(5);
+            map.setCenter(new kakao.maps.LatLng(lat, lng));
+          });
+          if (code !== lawdCdRef.current) {
+            lawdCdRef.current = code;
+            setLawdCd(code);
+          }
+        });
+      },
+      () => setLocating(false), // 권한 거부·타임아웃 — 기본 위치 그대로
+      { timeout: 8000, maximumAge: 300000 }
+    );
+  }
+
   // 지도 초기화 (1회) — services 라이브러리로 좌표→지역 변환 + 빈 곳 클릭→가까운 단지.
   useEffect(() => {
     const KEY = process.env.NEXT_PUBLIC_KAKAO_MAP_KEY;
@@ -245,25 +365,45 @@ export default function KakaoMap() {
     function initMap() {
       window.kakao.maps.load(() => {
         const kakao = window.kakao;
+        // 지난번 보던 자리부터 복원. 없으면 기본 위치로 띄우고 아래에서 현위치를 물어본다.
+        const saved = readSavedView();
         const map = new kakao.maps.Map(containerRef.current, {
-          center: new kakao.maps.LatLng(DEFAULT_CENTER.lat, DEFAULT_CENTER.lng),
-          level: 5,
+          center: new kakao.maps.LatLng(saved?.lat ?? DEFAULT_CENTER.lat, saved?.lng ?? DEFAULT_CENTER.lng),
+          level: saved?.level ?? 5,
         });
         mapRef.current = map;
         geocoderRef.current = new kakao.maps.services.Geocoder();
+        suppressIdleRef.current = Date.now(); // 생성 직후 첫 idle은 판정하지 않는다
 
-        // 지도 이동이 멈추면 중심 좌표의 시군구를 인식해 그 지역으로 전환.
+        if (saved && VALID_CODES.has(saved.lawdCd)) {
+          fitRef.current = false; // 복원한 위치를 자동 맞춤(setBounds)이 덮지 않도록
+          lawdCdRef.current = saved.lawdCd;
+          setLawdCd(saved.lawdCd);
+        }
+
+        // 지도가 멈추면 ① 위치를 저장하고 ② 잠시 더 조용할 때만 중심 시군구를 재판정한다.
         kakao.maps.event.addListener(map, "idle", () => {
           const c = map.getCenter();
-          geocoderRef.current.coord2RegionCode(c.getLng(), c.getLat(), (res, st) => {
-            if (st !== kakao.maps.services.Status.OK) return;
-            const r = res.find((x) => x.region_type === "B") || res[0];
-            const code = r.code.slice(0, 5);
-            if (VALID_CODES.has(code) && code !== lawdCdRef.current) {
-              fitRef.current = false; // 팬으로 인한 전환 → 자동 맞춤 안 함
-              setLawdCd(code);
-            }
+          writeSavedView({
+            lawdCd: lawdCdRef.current,
+            lat: c.getLat(),
+            lng: c.getLng(),
+            level: map.getLevel(),
           });
+          // 코드가 옮긴 이동이면 재판정하지 않는다(자기참조 루프 차단).
+          if (Date.now() - suppressIdleRef.current < PROGRAMMATIC_MOVE_MS) return;
+          clearTimeout(idleTimerRef.current);
+          idleTimerRef.current = setTimeout(() => {
+            geocoderRef.current.coord2RegionCode(c.getLng(), c.getLat(), (res, st) => {
+              if (st !== kakao.maps.services.Status.OK) return;
+              const r = res.find((x) => x.region_type === "B") || res[0];
+              const code = r.code.slice(0, 5);
+              if (!VALID_CODES.has(code) || code === lawdCdRef.current) return;
+              fitRef.current = false; // 팬으로 인한 전환 → 자동 맞춤 안 함
+              setRegionToast({ from: lawdCdRef.current, to: code });
+              setLawdCd(code);
+            });
+          }, IDLE_SETTLE_MS);
         });
 
         // 지도 빈 곳 클릭 → 클릭 지점에서 가장 가까운 단지(NEAR_CLICK_M 이내) 선택.
@@ -286,6 +426,8 @@ export default function KakaoMap() {
         });
 
         setReady(true);
+        // 저장된 위치가 없는 첫 방문에만 현위치를 물어본다(매번 권한 팝업이 뜨지 않게).
+        if (!saved) locateMe({ initial: true });
       });
     }
 
@@ -305,7 +447,11 @@ export default function KakaoMap() {
     script.addEventListener("load", initMap);
     document.head.appendChild(script);
     return () => script.removeEventListener("load", initMap);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // 대기 중인 idle 디바운스 타이머 정리(언마운트 후 setState 방지).
+  useEffect(() => () => clearTimeout(idleTimerRef.current), []);
 
   useEffect(() => {
     loadFavorites();
@@ -397,6 +543,14 @@ export default function KakaoMap() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, lawdCd]);
 
+  // 지역이 바뀌면 저장된 뷰의 지역도 맞춰 둔다 — 셀렉트로 바꾼 직후엔 지도가 아직 안 움직여
+  // idle이 안 오므로, 이게 없으면 새로고침 때 좌표와 지역이 어긋난다.
+  useEffect(() => {
+    if (!ready || !mapRef.current) return;
+    const c = mapRef.current.getCenter();
+    writeSavedView({ lawdCd, lat: c.getLat(), lng: c.getLng(), level: mapRef.current.getLevel() });
+  }, [ready, lawdCd]);
+
   // 지역 전체 1년 상승률(/api/rank) — 리스트 정렬·🔥 배지용. 지도와 병렬로 비동기 로드.
   useEffect(() => {
     if (!ready) return;
@@ -421,7 +575,7 @@ export default function KakaoMap() {
     if (dataRef.current.lawdCd !== lawdCd) return;
     renderMarkers();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [area, price, monthly, favorites, profile, priceBasis, rank]);
+  }, [area, price, monthly, favorites, loanKey, priceBasis, rank]);
 
   // 단지 바뀌면 추세를 '가장 거래 많은 평형'으로 초기화. 추세는 평형별만 본다
   // (전체는 평형이 섞여 시세가 들쭉날쭉 → 추세 의미가 흐려짐).
@@ -548,6 +702,7 @@ export default function KakaoMap() {
       dataRef.current = data;
       setTradesData(data); // 리스트 패널 파생용 반응형 사본
       setLastUpdated(data.fetchedAt ?? null);
+      setExcluded(data.excluded ?? null);
       renderMarkers();
     } catch (e) {
       setStatus(`불러오기 실패: ${e.message}`);
@@ -568,8 +723,32 @@ export default function KakaoMap() {
     // 자금(보유자산)이 설정된 경우에만 구매가능 여부로 마커를 색칠한다.
     const affordMode = hasProfile && assets > 0;
 
-    overlaysRef.current.forEach((o) => o.setMap(null));
-    overlaysRef.current = [];
+    // 오버레이는 **재사용**한다 — 필터를 한 번 바꿀 때마다 수백 개를 파괴/재생성하면
+    // 지도가 눈에 띄게 멈칫한다. 이번 렌더에 살아남은 키를 모아 두고 나머지만 걷어낸다.
+    const alive = new Set();
+    const upsert = (key, lat, lng, cls, html, onClick) => {
+      alive.add(key);
+      let e = overlaysRef.current.get(key);
+      if (!e) {
+        const el = document.createElement("div");
+        const overlay = new kakao.maps.CustomOverlay({
+          position: new kakao.maps.LatLng(lat, lng),
+          content: el,
+          yAnchor: 1.2,
+        });
+        overlay.setMap(map);
+        e = { overlay, el, lat, lng, cls: "", html: "" };
+        overlaysRef.current.set(key, e);
+      } else if (e.lat !== lat || e.lng !== lng) {
+        e.overlay.setPosition(new kakao.maps.LatLng(lat, lng));
+        e.lat = lat;
+        e.lng = lng;
+      }
+      if (e.cls !== cls) { e.el.className = cls; e.cls = cls; }
+      if (e.html !== html) { e.el.innerHTML = html; e.html = html; }
+      e.el.onclick = onClick; // 속성 대입 — addEventListener와 달리 중복 등록되지 않는다
+    };
+
     const bounds = new kakao.maps.LatLngBounds();
     let shownComplexes = 0;
     let shownTrades = 0;
@@ -598,18 +777,18 @@ export default function KakaoMap() {
         const isFav = favs.has(favKey(data.lawdCd, c.umdNm, c.aptNm));
         const yoy = rank.get(`${c.umdNm}|${c.aptNm}`)?.yoyPct;
         const hot = yoy != null && yoy >= HOT_PCT; // 1년 급등 단지는 핀에도 🔥
-        const el = document.createElement("div");
         let cls = "trade-pin";
         if (buyable === true) cls += " trade-pin--ok";
         else if (buyable === false) cls += " trade-pin--no";
         else if (isFav) cls += " trade-pin--fav"; // 색칠모드 아닐 때만 금색
-        el.className = cls;
-        el.innerHTML = `<b>${isFav ? "★ " : ""}${hot ? "🔥 " : ""}평균 ${formatManwon(stat.avg)}</b><span>${c.aptNm}</span>`;
-
-        const overlay = new kakao.maps.CustomOverlay({ position: pos, content: el, yAnchor: 1.2 });
-        overlay.setMap(map);
-        overlaysRef.current.push(overlay);
-        el.addEventListener("click", () => setSelected(c));
+        upsert(
+          `c:${data.lawdCd}|${c.umdNm}|${c.aptNm}`,
+          c.lat,
+          c.lng,
+          cls,
+          `<b>${isFav ? "★ " : ""}${hot ? "🔥 " : ""}평균 ${formatManwon(stat.avg)}</b><span>${c.aptNm}</span>`,
+          () => setSelected(c)
+        );
       });
 
     // 타지역 즐겨찾기: 현재 지역 밖의 즐겨찾기도 ★ 핀으로 함께 표시한다.
@@ -617,18 +796,26 @@ export default function KakaoMap() {
     // (현재 지역 즐겨찾기는 위 단지 루프에서 이미 금색 가격 핀으로 그림 → 중복 제외.)
     favoritesRef.current.forEach((f) => {
       if (f.lat == null || f.lawd_cd === data.lawdCd) return;
-      const pos = new kakao.maps.LatLng(f.lat, f.lng);
-      const el = document.createElement("div");
-      el.className = "trade-pin trade-pin--fav trade-pin--away";
-      el.innerHTML = `<b>★ ${regionName(f.lawd_cd)}</b><span>${f.apt_nm}</span>`;
-      const overlay = new kakao.maps.CustomOverlay({ position: pos, content: el, yAnchor: 1.2 });
-      overlay.setMap(map);
-      overlaysRef.current.push(overlay);
-      el.addEventListener("click", () => gotoFavorite(f));
+      upsert(
+        `f:${f.lawd_cd}|${f.umd_nm}|${f.apt_nm}`,
+        f.lat,
+        f.lng,
+        "trade-pin trade-pin--fav trade-pin--away",
+        `<b>★ ${regionName(f.lawd_cd)}</b><span>${f.apt_nm}</span>`,
+        () => gotoFavorite(f)
+      );
     });
 
+    // 이번 렌더에서 빠진 오버레이만 지운다.
+    for (const [key, e] of overlaysRef.current) {
+      if (!alive.has(key)) {
+        e.overlay.setMap(null);
+        overlaysRef.current.delete(key);
+      }
+    }
+
     if (fitRef.current && shownComplexes) {
-      map.setBounds(bounds);
+      moveMap(() => map.setBounds(bounds));
       fitRef.current = false;
     }
 
@@ -691,7 +878,7 @@ export default function KakaoMap() {
     }[sortBy];
     return cmp ? filtered.sort(cmp) : filtered;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tradesData, area, price, monthly, priceBasis, rank, profile, sortBy, onlyBuyable, favSet, householdMap]);
+  }, [tradesData, area, price, monthly, priceBasis, rank, loanKey, sortBy, onlyBuyable, favSet, householdMap]);
 
   // 리스트 상위 N개 행의 세대수 lazy 조회(/api/complex-info POST 일괄 — 서버가 kapt_cache 조회).
   useEffect(() => {
@@ -738,12 +925,13 @@ export default function KakaoMap() {
     setSelected(c);
     if (c.lat != null && mapRef.current) {
       fitRef.current = false;
-      mapRef.current.panTo(new window.kakao.maps.LatLng(c.lat, c.lng));
+      moveMap(() => mapRef.current.panTo(new window.kakao.maps.LatLng(c.lat, c.lng)));
     }
   }
 
   function selectRegion(code) {
     fitRef.current = true;
+    setRegionToast(null); // 직접 고른 지역 — 자동 전환 알림은 필요 없다
     setLawdCd(code);
   }
 
@@ -754,11 +942,14 @@ export default function KakaoMap() {
     // 좌표가 있으면 즉시 setCenter로 착지하고 자동맞춤은 끈다(레벨 5 = 초기 지도 배율).
     if (f.lat != null && mapRef.current) {
       fitRef.current = false;
-      mapRef.current.setLevel(5);
-      mapRef.current.setCenter(new window.kakao.maps.LatLng(f.lat, f.lng));
+      moveMap(() => {
+        mapRef.current.setLevel(5);
+        mapRef.current.setCenter(new window.kakao.maps.LatLng(f.lat, f.lng));
+      });
     } else {
       fitRef.current = true; // 좌표 없는 옛 즐겨찾기 → 지역 전체 맞춤 폴백
     }
+    setRegionToast(null);
     setLawdCd(f.lawd_cd);
   }
 
@@ -1246,7 +1437,17 @@ export default function KakaoMap() {
             </div>
           )}
 
-          <div style={hintLine}>평형을 누르면 시세 추세 그래프가 펼쳐져요</div>
+          <div style={hintLine}>
+            평형을 누르면 시세 추세 그래프가 펼쳐져요
+            {excluded && (excluded.cancelled > 0 || excluded.direct > 0) && (
+              <>
+                {" · "}
+                <span title="계약 해제된 거래와 가족간 증여성 거래가 많은 직거래는 시세에서 뺐습니다">
+                  이 지역 해제 {excluded.cancelled}건·직거래 {excluded.direct}건 제외됨
+                </span>
+              </>
+            )}
+          </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 8 }}>
             {detail.groups.map((g) => {
               const gp = priceBasis === "recent" ? g.recentAmount : g.avg;
@@ -1272,7 +1473,7 @@ export default function KakaoMap() {
                         {isOwnedPyeong(g) ? "✓ 보유중" : "보유 지정"}
                       </button>
                       <a
-                        href={naverLandUrl(selected.umdNm, selected.aptNm)}
+                        href={naverLandUrl(selected.umdNm, selected.aptNm, selected.naverName)}
                         target="_blank"
                         rel="noopener noreferrer"
                         style={naverLandLink}
@@ -1419,12 +1620,45 @@ export default function KakaoMap() {
     <div style={{ position: "relative", width: "100%", height: "100vh" }}>
       <div ref={containerRef} style={{ width: "100%", height: "100%" }} />
 
+      {/* 지도를 보면서 눌러야 하는 컨트롤 — 패널/시트 밖에 직접 둔다.
+          모바일은 시트가 열려 있으면 가려지므로 숨긴다. */}
+      {!(isMobile && sheet) && (
+        <button
+          onClick={() => locateMe()}
+          disabled={locating}
+          style={{ ...locateBtn, ...(isMobile ? { left: "auto", right: 14, bottom: 16 } : null) }}
+          title="현위치로 이동"
+          aria-label="현위치로 이동"
+        >
+          {locating ? "⏳" : "📍"}
+        </button>
+      )}
+
+      {regionToast && (
+        <div style={{ ...regionToastBox, ...(isMobile ? { top: 60 } : { top: 18 }) }}>
+          <span>📍 {regionName(regionToast.to)}로 이동했어요</span>
+          <button
+            onClick={() => {
+              const back = regionToast.from;
+              setRegionToast(null);
+              fitRef.current = true; // 되돌아간 지역 전체가 보이게
+              setLawdCd(back);
+            }}
+            style={regionToastBtn}
+          >
+            ↩︎ {regionName(regionToast.from)}
+          </button>
+        </div>
+      )}
+
       {isMobile ? (
         <>
           <MobileTopBar
             summary={shortSummary}
             hasFilter={hasFilter}
             onOpenSettings={() => setSheet("settings")}
+            onRefresh={() => loadTrades(lawdCd, { refresh: true })}
+            refreshing={loading}
             newsNew={newsNew}
           />
           <MobileSheet
@@ -1495,6 +1729,13 @@ export default function KakaoMap() {
         .trade-pin b { font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums; }
         .trade-pin span { font-size: 9px; opacity: 0.85; max-width: 92px;
           overflow: hidden; text-overflow: ellipsis; }
+        /* 현위치 점 — 단지 핀과 헷갈리지 않게 파란 원 + 옅은 링. */
+        .my-loc-dot {
+          width: 14px; height: 14px; border-radius: 50%;
+          background: #2563eb; border: 2.5px solid #fff;
+          box-shadow: 0 0 0 5px rgba(37,99,235,0.22), 0 1px 4px rgba(15,23,42,0.35);
+          transform: translate(-50%, -50%);
+        }
         .cx-row { padding: 9px 8px 9px 10px; border-bottom: 1px solid ${C.divider};
           border-left: 3px solid transparent; cursor: pointer;
           border-radius: 0 10px 10px 0;
