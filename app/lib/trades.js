@@ -52,10 +52,13 @@ function parseTrades(xml) {
     // 시세 왜곡 거래 판별용(tradeStats.excludeAbnormal). 해제="O"/정상=공백, 거래유형=중개거래|직거래.
     cdealType: pick(b, "cdealType"),
     dealingGbn: pick(b, "dealingGbn"),
-    // 법인 거래 판별용(marketSignal). 개인|법인|공공기관|기타 — 2026-08-03 원본 확인.
+    // 법인 거래 판별용(marketSignal). 값은 개인|법인|공공기관|기타로 알려져 있다.
+    // ⚠️ 2026-08-03 현재 data.go.kr 장애로 **원본 미확인** — 필드가 없으면 pick()이 ""를
+    //    돌려주고 marketSignal이 법인 지표를 숨긴다(0으로 표시하면 "법인 거래 없음"이라는
+    //    거짓말이 된다). API 복구되면 태그 전수 덤프로 확인할 것.
     buyerGbn: pick(b, "buyerGbn"),
     slerGbn: pick(b, "slerGbn"),
-    // 해제일. 해제는 계약보다 나중에 발생해 "언제 취소됐나"는 이 값이라야 맞다.
+    // 해제일(원본 미확인). 해제는 계약보다 나중에 발생해 "언제 취소됐나"는 이 값이라야 맞다.
     cdealDay: pick(b, "cdealDay"),
     dealYmd: `${pick(b, "dealYear")}-${pick(b, "dealMonth").padStart(2, "0")}-${pick(b, "dealDay").padStart(2, "0")}`,
   }));
