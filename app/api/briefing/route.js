@@ -6,10 +6,19 @@
 
 import { supabaseAdmin, noDbResponse } from "../../lib/supabaseServer";
 import { fetchRawMonths, currentYmd, monthsBack } from "../../lib/trades";
+import { buildSignal } from "../../lib/marketSignal";
 
 const RECENT_DAYS = 30; // 브리핑에 보여줄 최근 거래 기간
 const UPCOMING_DAYS = 30; // D-day 알림 범위
 const MONTHS = 2; // cron이 갱신하는 범위와 동일
+const FEED_MAX = 60; // 새 거래 피드 최대 행수 — 클라에서 자금 필터로 더 줄인다
+
+// dealYmd는 KST 달력 날짜인데 toISOString()은 UTC 날짜를 준다 → Vercel은 UTC로 돌고
+// cron은 06:00·06:30 KST라 매일 KST 00:00~08:59(=UTC 전날 15:00~23:59) 구간에 걸린다.
+// marketSignal.js의 ymd()와 같은 이유로 같은 보정을 쓴다 — 안 그러면 이 cutoff(기존
+// complexes/feed 창)와 buildSignal의 30일 창이 하루 어긋나, 같은 화면의 "시장 신호"
+// 카드와 "새 거래 피드" 카드가 자정 근처에 서로 다른 개수를 보여주게 된다(2026-08-03).
+const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
 
 function ddayFrom(ymd) {
   const t = new Date(`${ymd}T00:00:00`).getTime();
@@ -28,18 +37,23 @@ export async function GET() {
   const ymds = monthsBack(currentYmd(), MONTHS);
   const codes = [...new Set(favs.map((f) => f.lawd_cd))];
   const byCode = new Map();
+  const removedByCode = new Map();
   await Promise.all(
     codes.map(async (code) => {
       try {
-        const { byYmd } = await fetchRawMonths(code, ymds, { cacheOnly: true });
+        const { byYmd, removed } = await fetchRawMonths(code, ymds, { cacheOnly: true });
         byCode.set(code, [...byYmd.values()].flat());
+        removedByCode.set(code, removed || []);
       } catch {
         byCode.set(code, []); // 캐시 미스는 그 지역만 조용히 생략
+        removedByCode.set(code, []);
       }
     })
   );
 
-  const cutoff = new Date(Date.now() - RECENT_DAYS * 86400000).toISOString().slice(0, 10);
+  const cutoff = new Date(Date.now() - RECENT_DAYS * 86400000 + KST_OFFSET_MS)
+    .toISOString()
+    .slice(0, 10);
 
   const complexes = [];
   for (const f of favs) {
@@ -88,5 +102,51 @@ export async function GET() {
   }
   upcoming.sort((a, b) => a.dday - b.dday);
 
-  return Response.json({ complexes, upcoming });
+  // 📊 시장 신호 — 관심 지역별. 캐시에 이미 있는 원본만 쓰므로 추가 비용이 없다.
+  const asOf = new Date();
+  const signal = {
+    asOf: asOf.toISOString(),
+    byRegion: codes.map((code) => ({
+      lawdCd: code,
+      ...buildSignal({
+        trades: byCode.get(code) || [],
+        removed: removedByCode.get(code) || [],
+        asOf,
+      }),
+    })),
+  };
+
+  // 🆕 새 거래 피드 — 관심 지역 전체의 최근 거래(최신순). 자금 판정은 클라가 한다
+  // (프로필이 localStorage에 있어 서버는 모른다).
+  const feed = [];
+  for (const code of codes) {
+    const all = byCode.get(code) || [];
+    // 같은 평형 직전 거래를 찾으려면 단지+평형별로 모아야 한다.
+    const byKey = new Map();
+    for (const t of all) {
+      const k = `${t.umdNm}|${t.aptNm}|${Math.round(t.area)}`;
+      if (!byKey.has(k)) byKey.set(k, []);
+      byKey.get(k).push(t);
+    }
+    for (const list of byKey.values()) {
+      list.sort((a, b) => (a.dealYmd < b.dealYmd ? 1 : -1)); // 최신순
+      for (let i = 0; i < list.length; i++) {
+        const t = list[i];
+        if (t.dealYmd < cutoff) break; // 최신순이라 창을 벗어나면 이후도 벗어난다
+        feed.push({
+          lawdCd: code,
+          umdNm: t.umdNm,
+          aptNm: t.aptNm,
+          area: t.area,
+          amount: t.dealAmount,
+          floor: t.floor,
+          dealDate: t.dealYmd,
+          prevAmount: list[i + 1] ? list[i + 1].dealAmount : null,
+        });
+      }
+    }
+  }
+  feed.sort((a, b) => (a.dealDate < b.dealDate ? 1 : -1));
+
+  return Response.json({ complexes, upcoming, signal, feed: feed.slice(0, FEED_MAX) });
 }
