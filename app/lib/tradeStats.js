@@ -21,18 +21,30 @@ export function toPyeong(exclusiveM2) {
 //  · 직거래(dealingGbn="직거래") — 가족간 증여성 거래가 많아 시세에서 크게 벗어난다.
 // (2026-07-29 안양 동안구 202605 실측: 697건 중 해제 10건 / 직거래 21건, 직거래는 같은 평형
 //  중개거래 평균 대비 −41%~+24%로 튀어 월 평균가를 눈에 띄게 흔들었다.)
-// 반환 {trades, cancelled, direct} — 제외 건수는 "N건 제외" 표기에 쓴다.
+// 반환 {trades, cancelled, direct, removed} — 제외 건수는 "N건 제외" 표기에,
+// removed(제외된 거래 + 사유)는 시장 신호 지표에 쓴다(2026-08-03).
+// ⚠️ trades 반환은 예전 그대로다. 시세 경로 4개(/trades·/trend·/rank·/briefing)가
+//    이 값만 쓰므로, 신호를 얹어도 시세 정확도의 단일 지점은 깨지지 않는다.
 // ⚠️ 필드가 없는 옛 캐시 행은 그대로 통과시킨다(trades.js가 stale로 보고 재수집한다).
 export function excludeAbnormal(trades) {
   let cancelled = 0;
   let direct = 0;
   const kept = [];
+  const removed = [];
   for (const t of trades || []) {
-    if (t.cdealType === "O") { cancelled += 1; continue; }
-    if (t.dealingGbn === "직거래") { direct += 1; continue; }
+    if (t.cdealType === "O") {
+      cancelled += 1;
+      removed.push({ ...t, reason: "cancelled" });
+      continue;
+    }
+    if (t.dealingGbn === "직거래") {
+      direct += 1;
+      removed.push({ ...t, reason: "direct" });
+      continue;
+    }
     kept.push(t);
   }
-  return { trades: kept, cancelled, direct };
+  return { trades: kept, cancelled, direct, removed };
 }
 
 // 중앙값. 표본이 적은 달에 이상치 하나가 평균을 끌어올리는 것을 막는다(추세 그래프용).

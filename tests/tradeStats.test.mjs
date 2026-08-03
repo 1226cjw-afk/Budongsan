@@ -56,8 +56,39 @@ test("필드가 없는 옛 캐시 행은 그대로 통과", () => {
 });
 
 test("빈 입력·null을 견딘다", () => {
-  assert.deepEqual(excludeAbnormal([]), { trades: [], cancelled: 0, direct: 0 });
-  assert.deepEqual(excludeAbnormal(null), { trades: [], cancelled: 0, direct: 0 });
+  assert.deepEqual(excludeAbnormal([]), { trades: [], cancelled: 0, direct: 0, removed: [] });
+  assert.deepEqual(excludeAbnormal(null), { trades: [], cancelled: 0, direct: 0, removed: [] });
+});
+
+// 시장 신호는 "걸러낸 것"을 지표로 쓴다. 걸러낸 결과를 버리면 신호를 만들 수 없어,
+// excludeAbnormal이 제외 사유와 함께 배열로 돌려준다(2026-08-03).
+test("excludeAbnormal이 제외한 거래를 사유와 함께 돌려준다", () => {
+  const raw = [
+    { aptNm: "가", dealAmount: 50000, cdealType: "", dealingGbn: "중개거래" },
+    { aptNm: "나", dealAmount: 60000, cdealType: "O", dealingGbn: "중개거래" },
+    { aptNm: "다", dealAmount: 30000, cdealType: "", dealingGbn: "직거래" },
+  ];
+  const r = excludeAbnormal(raw);
+
+  assert.equal(r.trades.length, 1);
+  assert.equal(r.trades[0].aptNm, "가");
+  assert.equal(r.cancelled, 1);
+  assert.equal(r.direct, 1);
+
+  assert.equal(r.removed.length, 2);
+  assert.deepEqual(
+    r.removed.map((t) => [t.aptNm, t.reason]),
+    [["나", "cancelled"], ["다", "direct"]]
+  );
+});
+
+// 해제가 직거래보다 먼저 판정된다 — 둘 다 해당하면 해제로 한 번만 센다.
+test("해제이면서 직거래인 거래는 해제로 한 번만 집계", () => {
+  const r = excludeAbnormal([{ cdealType: "O", dealingGbn: "직거래" }]);
+  assert.equal(r.cancelled, 1);
+  assert.equal(r.direct, 0);
+  assert.equal(r.removed.length, 1);
+  assert.equal(r.removed[0].reason, "cancelled");
 });
 
 // ── 중앙값 ─────────────────────────────────────────────────
