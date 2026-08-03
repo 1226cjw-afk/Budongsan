@@ -149,13 +149,15 @@ export async function fetchRawMonths(lawdCd, ymds, { refresh = false, cacheOnly 
   // 저장된 원본에서 시세 왜곡 거래(해제·직거래)를 걷어낸 결과로 바꿔 반환한다.
   const finish = (fetchedYmds) => {
     const excluded = { cancelled: 0, direct: 0 };
+    const removed = []; // 제외된 거래 원본 — 시장 신호 지표용(2026-08-03)
     for (const [ymd, raw] of byYmd) {
-      const { trades, cancelled, direct } = excludeAbnormal(raw);
-      byYmd.set(ymd, trades);
-      excluded.cancelled += cancelled;
-      excluded.direct += direct;
+      const r = excludeAbnormal(raw);
+      byYmd.set(ymd, r.trades);
+      excluded.cancelled += r.cancelled;
+      excluded.direct += r.direct;
+      removed.push(...r.removed);
     }
-    return { byYmd, fetchedYmds, latestFetched, excluded };
+    return { byYmd, fetchedYmds, latestFetched, excluded, removed };
   };
 
   if (supabaseAdmin && !refresh) {
