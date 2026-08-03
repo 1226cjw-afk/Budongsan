@@ -64,13 +64,16 @@ function parseTrades(xml) {
   }));
 }
 
-// 해제/거래유형/매수자 구분 필드가 없는 옛 캐시 행 판별 → 미스로 취급해 재수집시킨다.
+// 해제/거래유형 필드가 없는 옛 캐시 행 판별 → 미스로 취급해 재수집시킨다.
 // (마이그레이션 없이 자가 치유. 빈 달은 판별 불가지만 거래가 없어 무해하다.)
-// ⚠️ buyerGbn 검사를 빼면 안 된다 — 2026-07-29에 cdealType만 보고 재수집한 캐시엔
-//    buyerGbn이 없어서, 이 검사가 없으면 법인 지표가 영영 빈 채로 남는다(2026-08-03).
+// ⚠️ buyerGbn(매수자 구분)은 **일부러 검사하지 않는다** — 2026-08-03 실측: 캐시 781행 중
+//    buyerGbn 보유 0행이라, 검사에 넣으면 전 캐시가 stale이 되어 cacheOnly인 /api/briefing이
+//    빈 응답을 낸다(신규 카드뿐 아니라 기존 관심단지 브리핑까지 빔). 대신 marketSignal의
+//    corporate.available=false가 필드 부재를 정확히 처리하고(0으로 표시하지 않고 타일을 숨김),
+//    cron이 매일 최근 2개월을 재수집하므로 신호가 읽는 60일 창은 하루 안에 자연히 채워진다.
 function lacksDealFlags(trades) {
   if (!Array.isArray(trades) || trades.length === 0) return false;
-  return !("cdealType" in trades[0]) || !("buyerGbn" in trades[0]);
+  return !("cdealType" in trades[0]);
 }
 
 const APT_CATEGORY = /주거시설\s*>\s*아파트/; // 카카오 category_name
