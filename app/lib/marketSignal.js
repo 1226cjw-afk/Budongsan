@@ -7,7 +7,12 @@
 
 const WINDOW_DAYS = 30;
 
-const ymd = (d) => d.toISOString().slice(0, 10);
+// 실거래의 dealYmd는 **KST 달력 날짜**다. toISOString()은 UTC 날짜를 주므로 그대로 쓰면
+// KST 00:00~08:59(= UTC 전날 15:00~23:59) 사이에 호출될 때 하루가 밀린다.
+// ⚠️ Vercel 함수는 UTC로 돌고 이 앱의 cron은 06:00·06:30 KST라 매일 이 구간에 걸린다
+//    (2026-08-03 리뷰가 잡음). 오프셋을 더해 KST 벽시계 날짜로 자른다.
+const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
+const ymd = (d) => new Date(d.getTime() + KST_OFFSET_MS).toISOString().slice(0, 10);
 
 // [start, end) 안의 거래만. dealYmd는 "YYYY-MM-DD" 문자열이라 사전순 비교가 곧 날짜순이다.
 const inRange = (arr, start, end) =>
