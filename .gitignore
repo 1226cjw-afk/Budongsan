@@ -19,3 +19,6 @@ npm-debug.log*
 
 # 개인 문서 (재무 정보 포함 — public 레포에 절대 커밋 금지)
 /private/
+
+# 에이전트 작업용 스크래치(진행 원장·리뷰 패키지) — 기록은 git 히스토리가 남긴다
+/.superpowers/
