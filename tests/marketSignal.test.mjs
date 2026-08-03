@@ -62,6 +62,8 @@ test("법인 순매수 = 법인 매수 − 법인 매도", () => {
   assert.equal(s.corporate.buy, 2);
   assert.equal(s.corporate.sell, 1);
   assert.equal(s.corporate.net, 1);
+  // 반대 방향 고정: 실값("법인"/"개인")이 있으면 available:true — 빈 문자열 케이스와
+  // 대비되는 짝(아래 "buyerGbn이 전부 빈 문자열이면" 테스트 참고, 2026-08-03).
   assert.equal(s.corporate.available, true);
 });
 
@@ -130,14 +132,16 @@ test("해제 거래는 창 안에 있어도 direct.ratio 분모에서 빠진다"
   assert.equal(s.direct.ratio, 1 / 3);
 });
 
-// buyerGbn: "" 은 "필드가 없다"가 아니라 "필드는 있는데 값이 비었다"다.
-// in 연산자로 존재 여부를 판정해야 하는 이유 — truthy 체크로 "간소화"하면
-// 이 케이스가 available:false로 잘못 떨어진다.
-test("buyerGbn이 빈 문자열이어도 필드는 존재하므로 available:true", () => {
+// buyerGbn: "" 은 "필드가 없다"와 구분이 안 되는 상태다 — parseTrades의 pick()은 국토부가
+// 태그를 아예 안 줘도 ""를 채워 넣어 키 자체는 항상 존재한다. 그래서 "값이 있느냐"로
+// 판정해야 한다 — 키 존재(`"buyerGbn" in t`)로 판정하면 태그가 영영 안 와도(현재 상황)
+// 모든 행이 ""를 가진 순간 available:true가 되고 net은 0으로 계산돼, 막으려던 "법인
+// 거래가 없다"는 거짓말을 다시 보여주게 된다(2026-08-03 리뷰가 잡음 — 최초 스펙 오류).
+test("buyerGbn이 전부 빈 문자열이면 available:false (키만 있고 값은 없음)", () => {
   const s = buildSignal({
     trades: [{ dealYmd: IN, aptNm: "가", area: 84, dealAmount: 50000, buyerGbn: "", slerGbn: "개인" }],
     removed: [],
     asOf: ASOF,
   });
-  assert.equal(s.corporate.available, true);
+  assert.equal(s.corporate.available, false);
 });

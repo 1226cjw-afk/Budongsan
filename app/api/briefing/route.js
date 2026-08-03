@@ -10,7 +10,14 @@ import { buildSignal } from "../../lib/marketSignal";
 
 const RECENT_DAYS = 30; // 브리핑에 보여줄 최근 거래 기간
 const UPCOMING_DAYS = 30; // D-day 알림 범위
-const MONTHS = 2; // cron이 갱신하는 범위와 동일
+// ⚠️ 2개월이 아니라 3개월. buildSignal의 prev 창은 [asOf−60일, asOf−30일)이라 60일 전까지
+//    필요한데, 60일은 최악의 경우(예: 8/1 기준 60일 전=6/2) 달력월 3개를 걸친다.
+//    2개월로는 prev 창이 데이터 부족(starved)해져 delta가 항상 "급증"으로 보이는 버그였다
+//    (2026-08-03 리뷰 실측: 41173 vol=134/42, 11530 180/40, 11410 77/16, 11710 22/7 —
+//    prevCount가 전부 저평가). 추가된 세 번째 달은 cacheOnly라 그냥 캐시 조회 한 번
+//    더인 것이고(이미 /api/trades·/api/trend 호출로 영구 캐시된 달이면 공짜), 한 번도
+//    안 데운(warm) 지역이면 그 달만 조용히 빠질 뿐 실패하지 않는다. 2로 "최적화"하지 말 것.
+const MONTHS = 3;
 const FEED_MAX = 60; // 새 거래 피드 최대 행수 — 클라에서 자금 필터로 더 줄인다
 
 // dealYmd는 KST 달력 날짜인데 toISOString()은 UTC 날짜를 준다 → Vercel은 UTC로 돌고

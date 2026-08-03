@@ -38,8 +38,14 @@ export function buildSignal({ trades = [], removed = [], asOf = new Date() } = {
   const prevTotal = prev.length + dPrev.length;
 
   // 옛 캐시 행엔 buyerGbn이 없다. 이때 0을 표시하면 "법인 거래가 없다"는 거짓말이 되므로
-  // 표본에 필드가 하나도 없으면 available:false로 내려 UI가 타일을 숨기게 한다.
-  const hasGbn = [...now, ...prev].some((t) => "buyerGbn" in t);
+  // 표본에 값이 하나도 없으면 available:false로 내려 UI가 타일을 숨기게 한다.
+  // ⚠️ "키 존재"가 아니라 "값 존재"로 판정할 것 — trades.js의 parseTrades는 태그가
+  //    없어도 pick()이 ""를 채워 buyerGbn 키를 항상 만든다. `"buyerGbn" in t`로
+  //    판정하면 국토부가 그 태그를 영영 안 줘도(현재 발생 중) 모든 행이 ""를 갖는 순간
+  //    키는 다 있는데 값은 다 비어 net=0으로 계산돼 "법인 순매수 0건"이라는, 막으려던
+  //    바로 그 거짓말을 다시 보여준다(2026-08-03 리뷰가 잡음). truthy 체크면 옛 캐시행
+  //    (undefined)과 빈 태그("") 둘 다 자연히 available:false로 떨어진다.
+  const hasGbn = [...now, ...prev].some((t) => t.buyerGbn);
   const countBuy = (a) => a.filter((t) => t.buyerGbn === "법인").length;
   const countSell = (a) => a.filter((t) => t.slerGbn === "법인").length;
 
