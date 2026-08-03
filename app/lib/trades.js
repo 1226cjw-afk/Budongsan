@@ -52,14 +52,22 @@ function parseTrades(xml) {
     // 시세 왜곡 거래 판별용(tradeStats.excludeAbnormal). 해제="O"/정상=공백, 거래유형=중개거래|직거래.
     cdealType: pick(b, "cdealType"),
     dealingGbn: pick(b, "dealingGbn"),
+    // 법인 거래 판별용(marketSignal). 개인|법인|공공기관|기타 — 2026-08-03 원본 확인.
+    buyerGbn: pick(b, "buyerGbn"),
+    slerGbn: pick(b, "slerGbn"),
+    // 해제일. 해제는 계약보다 나중에 발생해 "언제 취소됐나"는 이 값이라야 맞다.
+    cdealDay: pick(b, "cdealDay"),
     dealYmd: `${pick(b, "dealYear")}-${pick(b, "dealMonth").padStart(2, "0")}-${pick(b, "dealDay").padStart(2, "0")}`,
   }));
 }
 
-// 해제/거래유형 필드가 없는 옛 캐시 행 판별 → 미스로 취급해 재수집시킨다.
+// 해제/거래유형/매수자 구분 필드가 없는 옛 캐시 행 판별 → 미스로 취급해 재수집시킨다.
 // (마이그레이션 없이 자가 치유. 빈 달은 판별 불가지만 거래가 없어 무해하다.)
+// ⚠️ buyerGbn 검사를 빼면 안 된다 — 2026-07-29에 cdealType만 보고 재수집한 캐시엔
+//    buyerGbn이 없어서, 이 검사가 없으면 법인 지표가 영영 빈 채로 남는다(2026-08-03).
 function lacksDealFlags(trades) {
-  return Array.isArray(trades) && trades.length > 0 && !("cdealType" in trades[0]);
+  if (!Array.isArray(trades) || trades.length === 0) return false;
+  return !("cdealType" in trades[0]) || !("buyerGbn" in trades[0]);
 }
 
 const APT_CATEGORY = /주거시설\s*>\s*아파트/; // 카카오 category_name
