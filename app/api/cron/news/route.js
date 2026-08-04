@@ -5,6 +5,7 @@
 // 인증: CRON_SECRET 설정 시 `Authorization: Bearer <CRON_SECRET>` 필요(refresh와 동일).
 
 import { fetchNews, newsKeywords, newsSource } from "../../../lib/news";
+import { fetchSubscriptions } from "../../../lib/applyhome";
 import { cronUnauthorized } from "../../../lib/cronAuth";
 import { supabaseAdmin, noDbResponse } from "../../../lib/supabaseServer";
 
@@ -66,12 +67,46 @@ export async function GET(request) {
     .delete()
     .lt("fetched_at", cutoff);
 
+  // 🏗 청약 수집 — Vercel Hobby는 프로젝트당 cron 2개가 한도라(refresh 06:00 + news 06:30)
+  //    새 cron을 만들 수 없어 여기 합친다. 미승인·장애면 []가 와서 조용히 넘어간다.
+  let subscriptions = 0;
+  let subscriptionError;
+  try {
+    const subs = await fetchSubscriptions();
+    if (subs.length) {
+      const { error } = await supabaseAdmin.from("subscription_items").upsert(
+        subs.map((s) => ({
+          house_manage_no: s.houseManageNo,
+          name: s.name,
+          region: s.region,
+          address: s.address,
+          kind: s.kind,
+          receipt_start: s.receiptStart,
+          receipt_end: s.receiptEnd,
+          winner_date: s.winnerDate,
+          households: s.households,
+          url: s.url,
+          fetched_at: new Date().toISOString(),
+        })),
+        { onConflict: "house_manage_no" }
+      );
+      if (error) subscriptionError = error.message;
+      else subscriptions = subs.length;
+    }
+  } catch (e) {
+    // 청약 실패가 뉴스 수집을 망치지 않게. 조회는 receipt_end >= today로 거르므로
+    // 지난 공고가 쌓여도 화면에는 영향이 없다(프루닝을 따로 두지 않는 이유).
+    subscriptionError = e.message;
+  }
+
   return Response.json({
     ok: true,
     source: newsSource(),
     keywords: results,
     collected: rows.length,
     inserted,
+    subscriptions,
+    subscriptionError,
     pruneError: pruneError?.message,
     durationMs: Date.now() - started,
   });
