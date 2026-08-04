@@ -13,6 +13,7 @@ import FavoriteCard from "./briefing/FavoriteCard";
 import ScheduleCard from "./briefing/ScheduleCard";
 import MarketSignalCard from "./briefing/MarketSignalCard";
 import DealFeedCard from "./briefing/DealFeedCard";
+import SubscriptionCard from "./briefing/SubscriptionCard";
 import ImpactNewsCard from "./briefing/ImpactNewsCard";
 
 const PROFILE_KEY = "re_loan_profile"; // KakaoMap과 동일 키
@@ -78,11 +79,16 @@ export default function Briefing({ news }) {
   const assets = usableAssets(profile);
   const hasAny = data.complexes?.length || data.upcoming?.length;
 
-  // 즐겨찾기가 없으면 빈 카드 3개 대신 안내 한 줄.
+  // 즐겨찾기가 없으면 빈 카드들 대신 안내 한 줄.
+  // ⚠️ 청약 레이더는 이 분기에서도 렌더한다 — ★와 무관한 정보라 즐겨찾기가 없는
+  //    사용자에게도 보여야 한다(안내만 뜨는 빈 화면 방지).
   if (!hasAny) {
     return (
-      <div style={emptyHint}>
-        지도에서 <b>★</b>로 관심 단지를 담으면, 여기에 그 단지의 새 실거래와 일정이 떠요.
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        <div style={emptyHint}>
+          지도에서 <b>★</b>로 관심 단지를 담으면, 여기에 그 단지의 새 실거래와 일정이 떠요.
+        </div>
+        <SubscriptionCard />
       </div>
     );
   }
@@ -109,6 +115,7 @@ export default function Briefing({ news }) {
           hasIncome={hasIncome}
         />
       )}
+      <SubscriptionCard />
       {impact.length > 0 && <ImpactNewsCard news={impact} hasIncome={hasIncome} />}
     </div>
   );
