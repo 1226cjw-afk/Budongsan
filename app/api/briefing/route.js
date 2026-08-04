@@ -156,5 +156,15 @@ export async function GET() {
   }
   feed.sort((a, b) => (a.dealDate < b.dealDate ? 1 : -1));
 
-  return Response.json({ complexes, upcoming, signal, feed: feed.slice(0, FEED_MAX) });
+  // ⚠️ ★ 단지 거래는 상한에서 보호한다 — 그냥 최신순 60건으로 자르면 ★ 탭이 통째로
+  //    빈다. ★ 단지의 새 거래는 지역 전체보다 훨씬 드물어(2026-08-04 실측: 최신 60건이
+  //    전부 7/30~8/01, ★ 4곳의 거래는 7/07~7/18이라 컷 밖) 기본 탭이 늘 "거래 없음"으로
+  //    보였다. ★ 것을 먼저 담고 남은 자리를 최신순으로 채운 뒤 다시 날짜순 정렬한다.
+  const favKeys = new Set(favs.map((f) => `${f.lawd_cd}|${f.umd_nm}|${f.apt_nm}`));
+  const isFav = (t) => favKeys.has(`${t.lawdCd}|${t.umdNm}|${t.aptNm}`);
+  const favRows = feed.filter(isFav).slice(0, FEED_MAX);
+  const rest = feed.filter((t) => !isFav(t)).slice(0, Math.max(0, FEED_MAX - favRows.length));
+  const merged = [...favRows, ...rest].sort((a, b) => (a.dealDate < b.dealDate ? 1 : -1));
+
+  return Response.json({ complexes, upcoming, signal, feed: merged });
 }

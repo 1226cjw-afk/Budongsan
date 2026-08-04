@@ -12,6 +12,7 @@ import { emptyHint } from "./briefing/styles";
 import FavoriteCard from "./briefing/FavoriteCard";
 import ScheduleCard from "./briefing/ScheduleCard";
 import MarketSignalCard from "./briefing/MarketSignalCard";
+import DealFeedCard from "./briefing/DealFeedCard";
 import ImpactNewsCard from "./briefing/ImpactNewsCard";
 
 const PROFILE_KEY = "re_loan_profile"; // KakaoMap과 동일 키
@@ -63,6 +64,14 @@ export default function Briefing({ news }) {
     [news]
   );
 
+  // ★ 단지 키 집합 — 피드에서 "내 단지 거래"를 가려낸다.
+  // ⚠️ useMemo로 뺄 것. JSX에 `new Set(...)`을 인라인하면 렌더마다 새 참조가 생겨
+  //    DealFeedCard의 rows useMemo가 매번 무효화된다(피드 60건 × 대출계산).
+  const favoriteKeys = useMemo(
+    () => new Set((data?.complexes || []).map((c) => `${c.lawdCd}|${c.umdNm}|${c.aptNm}`)),
+    [data]
+  );
+
   if (data === null) return null; // 로딩 중엔 자리를 차지하지 않는다
 
   const hasIncome = Number(profile?.income) > 0;
@@ -91,6 +100,15 @@ export default function Briefing({ news }) {
       )}
       {data.upcoming?.length > 0 && <ScheduleCard upcoming={data.upcoming} />}
       {data.signal && <MarketSignalCard signal={data.signal} />}
+      {data.feed?.length > 0 && (
+        <DealFeedCard
+          feed={data.feed}
+          favorites={favoriteKeys}
+          profile={profile}
+          assets={assets}
+          hasIncome={hasIncome}
+        />
+      )}
       {impact.length > 0 && <ImpactNewsCard news={impact} hasIncome={hasIncome} />}
     </div>
   );
