@@ -7,6 +7,21 @@
 
 const WINDOW_DAYS = 30;
 
+// 실거래 신고 기한은 계약일로부터 30일(부동산 거래신고 등에 관한 법률 §3①)이라
+// **최근 30일 계약분은 구조적으로 덜 채워져 있다**. 그 창을 직전 창과 그냥 비교하면
+// 시장과 무관하게 매일 모든 지역이 "거래량 급감"으로 보인다.
+// ⚠️ 2026-08-04 실측 — 41173(안양 동안구) 캐시를 계약일 10일 단위로 쪼갠 분포.
+//    신고가 끝난 달은 평탄하고, 진행 중인 달은 월말로 갈수록 급락한다:
+//      계약월  1~10일  11~20일  21~31일  (수집일)
+//      2026-05   212     172      255    7/30  ← 평탄 = 신고 완료
+//      2026-06   168     124      140    7/31  ← 평탄 = 신고 완료
+//      2026-07   114      50       19    8/1   ← 급락 = 아직 신고 중
+//    보정 없이 "최근 30일 vs 직전 30일"로 두면 관심지역 4곳 전부 −55~−65%가 떴다
+//    (시장 급랭이 아니라 오른쪽 계단을 통째로 세고 있던 것).
+//    ⚠️ 이 오프셋을 0으로 되돌리지 말 것 — 되돌리면 위 거짓 급감이 그대로 살아난다.
+//    ⚠️ 보정 후에도 남는 감소는 진짜다(같은 지역 월별 총계 4월 659·5월 639·6월 432).
+const REPORT_LAG_DAYS = 30;
+
 // 실거래의 dealYmd는 **KST 달력 날짜**다. toISOString()은 UTC 날짜를 주므로 그대로 쓰면
 // KST 00:00~08:59(= UTC 전날 15:00~23:59) 사이에 호출될 때 하루가 밀린다.
 // ⚠️ Vercel 함수는 UTC로 돌고 이 앱의 cron은 06:00·06:30 KST라 매일 이 구간에 걸린다
@@ -18,10 +33,13 @@ const ymd = (d) => new Date(d.getTime() + KST_OFFSET_MS).toISOString().slice(0, 
 const inRange = (arr, start, end) =>
   arr.filter((t) => t.dealYmd && t.dealYmd >= start && t.dealYmd < end);
 
+const daysBefore = (asOf, n) => ymd(new Date(asOf.getTime() - n * 86400000));
+
 export function buildSignal({ trades = [], removed = [], asOf = new Date() } = {}) {
-  const end = ymd(asOf);
-  const mid = ymd(new Date(asOf.getTime() - WINDOW_DAYS * 86400000));
-  const start = ymd(new Date(asOf.getTime() - 2 * WINDOW_DAYS * 86400000));
+  // 창 셋 다 신고 기한만큼 밀려 있다: now = [asOf−60, asOf−30), prev = [asOf−90, asOf−60).
+  const end = daysBefore(asOf, REPORT_LAG_DAYS);
+  const mid = daysBefore(asOf, REPORT_LAG_DAYS + WINDOW_DAYS);
+  const start = daysBefore(asOf, REPORT_LAG_DAYS + 2 * WINDOW_DAYS);
 
   const now = inRange(trades, mid, end);
   const prev = inRange(trades, start, mid);
@@ -51,6 +69,10 @@ export function buildSignal({ trades = [], removed = [], asOf = new Date() } = {
 
   return {
     days: WINDOW_DAYS,
+    lagDays: REPORT_LAG_DAYS,
+    // 화면이 "최근 30일"이라 우기지 못하게 실제 창을 함께 내려보낸다 — 카드 헤더가
+    // 이 값을 그대로 찍어야 사용자가 언제 구간인지 안다.
+    window: { start: mid, end },
     volume: {
       count: now.length,
       prevCount: prev.length,

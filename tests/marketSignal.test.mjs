@@ -3,16 +3,18 @@ import assert from "node:assert/strict";
 import { buildSignal } from "../app/lib/marketSignal.js";
 
 const ASOF = new Date("2026-08-03T12:00:00+09:00");
-// 창 안(최근 30일) / 직전 창(30~60일 전) 날짜
-const IN = "2026-07-20";
-const PREV = "2026-06-20";
+// ⚠️ 창은 신고 기한(30일)만큼 뒤로 밀려 있다 — ASOF 기준 확정 창 = [06-04, 07-04),
+//    직전 창 = [05-05, 06-04). "최근 30일"이 아니다(marketSignal.js의 REPORT_LAG_DAYS).
+const IN = "2026-06-20"; // 확정 창 안
+const PREV = "2026-05-20"; // 직전 창 안
+const TOO_FRESH = "2026-07-20"; // 아직 신고가 덜 찬 구간 — 어느 창에도 안 들어간다
 
 const t = (dealYmd, extra = {}) => ({
   dealYmd, aptNm: "가", area: 84, dealAmount: 50000,
   buyerGbn: "개인", slerGbn: "개인", ...extra,
 });
 
-test("거래량: 최근 30일과 직전 30일을 나눠 센다", () => {
+test("거래량: 확정 창과 직전 창을 나눠 센다", () => {
   const s = buildSignal({
     trades: [t(IN), t(IN), t(PREV)],
     removed: [],
@@ -21,6 +23,28 @@ test("거래량: 최근 30일과 직전 30일을 나눠 센다", () => {
   assert.equal(s.volume.count, 2);
   assert.equal(s.volume.prevCount, 1);
   assert.equal(s.volume.delta, 1);
+});
+
+// 이 테스트가 지연 보정 전체의 회귀 가드다. 보정을 되돌리면(REPORT_LAG_DAYS=0)
+// TOO_FRESH가 now에 잡혀 count=1이 되며 여기서 터진다.
+// 근거: 최근 30일은 신고 기한(계약 후 30일) 때문에 늘 과소집계라 직전 창과 비교하면
+// 시장과 무관하게 매일 "급감"이 뜬다(2026-08-04 실측, marketSignal.js 주석 참조).
+test("신고가 덜 찬 최근 30일은 어느 창에도 넣지 않는다", () => {
+  const s = buildSignal({
+    trades: [t(TOO_FRESH), t(TOO_FRESH), t(IN)],
+    removed: [t(TOO_FRESH, { reason: "direct" })],
+    asOf: ASOF,
+  });
+  assert.equal(s.volume.count, 1); // IN만
+  assert.equal(s.volume.prevCount, 0);
+  assert.equal(s.direct.count, 0); // 최근 직거래도 마찬가지로 제외
+});
+
+// 화면 헤더가 "최근 30일"이라 우기지 못하게 실제 창을 함께 내려준다.
+test("window에 확정 창의 시작·끝을 함께 준다", () => {
+  const s = buildSignal({ trades: [], removed: [], asOf: ASOF });
+  assert.deepEqual(s.window, { start: "2026-06-04", end: "2026-07-04" });
+  assert.equal(s.lagDays, 30);
 });
 
 test("해제: removed의 cancelled만 세고 직거래는 안 센다", () => {
@@ -87,13 +111,14 @@ test("빈 표본에서도 터지지 않는다", () => {
 
 // 자정 인접 asOf: toISOString()의 UTC 날짜를 그대로 쓰면 KST 00:00~08:59에
 // 하루가 밀린다(2026-08-03 리뷰가 잡은 실제 버그 — cron이 매일 이 구간에서 돈다).
-// asOf 2026-08-03T03:00:00+09:00 == 2026-08-02T18:00:00Z. UTC 기준이면 end가
-// "2026-08-02"로 계산돼 dealYmd "2026-08-02"가 `< end`에 걸려 창에서 빠진다.
-// KST 기준이면 end는 "2026-08-03"이라 정상적으로 now 창에 들어온다.
+// asOf 2026-08-03T03:00:00+09:00 == 2026-08-02T18:00:00Z, 여기서 30일(신고 기한)을
+// 빼면 2026-07-03T18:00:00Z. UTC 날짜를 쓰면 end="2026-07-03"이 돼 dealYmd
+// "2026-07-03"이 `< end`에 걸려 창에서 빠진다. KST 보정하면 end="2026-07-04"라
+// 정상적으로 확정 창에 들어온다.
 test("자정 인접 asOf에서도 KST 달력 날짜로 창을 나눈다", () => {
   const midnightAdjacent = new Date("2026-08-03T03:00:00+09:00");
   const s = buildSignal({
-    trades: [t("2026-08-02")],
+    trades: [t("2026-07-03")],
     removed: [],
     asOf: midnightAdjacent,
   });
@@ -101,14 +126,15 @@ test("자정 인접 asOf에서도 KST 달력 날짜로 창을 나눈다", () => 
 });
 
 // 반열림 경계: [start, mid)는 prev, [mid, end)는 now. mid·start 자체를 이 모듈과
-// 같은 산식(KST 오프셋 + 30일/60일)으로 도출해 "값을 하드코딩"이 아니라
+// 같은 산식(KST 오프셋 + 신고 지연 30일 + 30일/60일)으로 도출해 "값을 하드코딩"이 아니라
 // "그 경계 정의를 검증"하게 한다.
 test("반열림 경계: mid는 now 쪽, start는 prev 쪽에 정확히 한 번만 잡힌다", () => {
   const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
   const ymd = (d) => new Date(d.getTime() + KST_OFFSET_MS).toISOString().slice(0, 10);
   const WINDOW_DAYS = 30;
-  const midDate = ymd(new Date(ASOF.getTime() - WINDOW_DAYS * 86400000));
-  const startDate = ymd(new Date(ASOF.getTime() - 2 * WINDOW_DAYS * 86400000));
+  const LAG = 30;
+  const midDate = ymd(new Date(ASOF.getTime() - (LAG + WINDOW_DAYS) * 86400000));
+  const startDate = ymd(new Date(ASOF.getTime() - (LAG + 2 * WINDOW_DAYS) * 86400000));
 
   const s = buildSignal({
     trades: [t(midDate), t(startDate)],

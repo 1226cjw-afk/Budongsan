@@ -11,6 +11,7 @@ import { loadSeen, markSeen } from "../lib/briefingSeen";
 import { emptyHint } from "./briefing/styles";
 import FavoriteCard from "./briefing/FavoriteCard";
 import ScheduleCard from "./briefing/ScheduleCard";
+import MarketSignalCard from "./briefing/MarketSignalCard";
 import ImpactNewsCard from "./briefing/ImpactNewsCard";
 
 const PROFILE_KEY = "re_loan_profile"; // KakaoMap과 동일 키
@@ -89,6 +90,7 @@ export default function Briefing({ news }) {
         />
       )}
       {data.upcoming?.length > 0 && <ScheduleCard upcoming={data.upcoming} />}
+      {data.signal && <MarketSignalCard signal={data.signal} />}
       {impact.length > 0 && <ImpactNewsCard news={impact} hasIncome={hasIncome} />}
     </div>
   );
