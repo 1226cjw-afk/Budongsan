@@ -4,7 +4,7 @@
 // ⚠️ 청약홈 API가 죽거나 미승인이면 목록이 비어 이 카드는 렌더되지 않는다(설계된 동작).
 //    브리핑의 다른 카드는 그대로 뜬다.
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
 import { daysUntil } from "../../lib/format";
 import { C } from "../../lib/palette";
 import { card, cardHead, headSub, row, rowDivider, rowTop, rowName, rowPrice, rowMeta } from "./styles";
@@ -24,16 +24,10 @@ function baseName(name) {
     .trim();
 }
 
-export default function SubscriptionCard() {
-  const [items, setItems] = useState(null);
-
-  useEffect(() => {
-    fetch("/api/subscription")
-      .then((r) => r.json())
-      .then((d) => setItems(d.items || []))
-      .catch(() => setItems([])); // 실패해도 나머지 브리핑은 살린다
-  }, []);
-
+// ⚠️ items는 Briefing이 내려준다 — 이 안에서 fetch하지 말 것. 이 카드는 부모의 로딩
+//    게이트(data === null) 뒤에 마운트되므로, 여기서 부르면 /api/briefing이 끝나야
+//    /api/subscription이 출발한다(2026-08-05 실측 +410ms). null = 아직 로딩 중.
+export default function SubscriptionCard({ items }) {
   // 같은 단지·같은 마감일·같은 구분이면 한 줄로. 세대수는 합산한다.
   const groups = useMemo(() => {
     const by = new Map();
