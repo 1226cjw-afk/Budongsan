@@ -5,6 +5,20 @@ export function daysUntil(ymd) {
   return Math.ceil((new Date(ymd + "T00:00:00") - Date.now()) / 86400000);
 }
 
+// 두 "YYYY-MM-DD" 사이의 달력 일수. ⚠️ 서버는 UTC로 돌기 때문에 new Date(ymd)로 파싱하면
+// 기준일이 런타임 타임존에 끌려간다 — 문자열을 직접 쪼개 UTC로 고정해 타임존을 배제한다.
+// (브라우저 전용인 daysUntil과 달리, 이건 서버가 KST 날짜를 받아 세는 용도다.)
+export function daysBetweenYmd(fromYmd, toYmd) {
+  const parse = (s) => {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(s || ""));
+    return m ? Date.UTC(+m[1], +m[2] - 1, +m[3]) : null;
+  };
+  const a = parse(fromYmd);
+  const b = parse(toYmd);
+  if (a == null || b == null) return null;
+  return Math.round((b - a) / 86400000);
+}
+
 // 임대차 만기 라벨. 갱신청구 가능기간 = 만기 6~2개월 전(주택임대차보호법 §6의3, 2020-07-31 시행,
 // 6개월~2개월 구간은 2020-12-10 이후 계약 기준. 확인일 2026-07-05).
 export function leaseLabel(leaseEnd) {
