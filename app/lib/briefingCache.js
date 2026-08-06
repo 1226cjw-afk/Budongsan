@@ -17,7 +17,7 @@ export function kstDate(nowMs = Date.now()) {
 //    (buildBriefingPayload가 쓰는 6개). lat/lng/created_at은 브리핑 출력에 안 쓰이므로
 //    넣지 않는다 — 넣으면 무관한 변경으로 캐시가 헛되이 무효화된다.
 //    반대로 payload가 새 필드를 읽기 시작하면 여기에도 반드시 추가할 것.
-const SEP = ""; // 필드 구분자(unit separator)
+const SEP = "\u001f"; // 필드 구분자(unit separator)
 
 const FAV_FIELDS = ["lawd_cd", "umd_nm", "apt_nm", "lease_end", "note", "note_date"];
 
