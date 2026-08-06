@@ -7,7 +7,7 @@
 
 import { fetchRawMonths, currentYmd, monthsBack } from "./trades";
 import { buildSignal } from "./marketSignal";
-import { kstDate } from "./briefingCache";
+import { kstDate, buildFingerprint } from "./briefingCache";
 import { daysBetweenYmd } from "./format";
 
 const RECENT_DAYS = 30; // 브리핑에 보여줄 최근 거래 기간
@@ -161,4 +161,86 @@ export async function buildBriefingPayload(favs) {
   const merged = [...favRows, ...rest].sort((a, b) => (a.dealDate < b.dealDate ? 1 : -1));
 
   return { complexes, upcoming, signal, feed: merged };
+}
+
+// ── 페이로드 캐시 ──────────────────────────────────────────────────────────
+// ⚠️ 이 계층의 실패는 **전부 라이브 계산으로 폴백**한다(테이블 부재·조회 실패·지문 실패).
+//    캐싱이 통째로 죽어도 동작은 캐시 도입 전과 같아진다. 반대 방향(실패 시 옛 payload를
+//    내보내는 것)으로 기울면 안 된다 — 그건 조용히 틀린 화면이 된다.
+
+// 대상 캐시 행의 최신 fetched_at 1건만. postgrest 집계 대신 order+limit(1)로 받는다
+// (전송량 1행). 실패하면 null → 지문 불일치 → 재계산 쪽으로 기운다(안전한 방향).
+async function latestFetchedAt(supabase, codes, ymds) {
+  try {
+    const { data, error } = await supabase
+      .from("trade_raw_cache")
+      .select("fetched_at")
+      .in("lawd_cd", codes)
+      .in("deal_ymd", ymds)
+      .order("fetched_at", { ascending: false })
+      .limit(1);
+    if (error) return null;
+    return data?.[0]?.fetched_at || null;
+  } catch {
+    return null;
+  }
+}
+
+async function readCache(supabase) {
+  try {
+    const { data, error } = await supabase
+      .from("briefing_cache")
+      .select("fingerprint, payload, computed_at")
+      .eq("id", 1)
+      .maybeSingle();
+    if (error) return null; // 0008 미적용(테이블 부재) 포함 — 조용히 라이브 계산
+    return data || null;
+  } catch {
+    return null;
+  }
+}
+
+async function writeCache(supabase, fingerprint, payload, computedAt) {
+  try {
+    const { error } = await supabase
+      .from("briefing_cache")
+      .upsert({ id: 1, fingerprint, payload, computed_at: computedAt }, { onConflict: "id" });
+    if (error) console.error("[briefing_cache] upsert:", error.message);
+  } catch (e) {
+    console.error("[briefing_cache] upsert:", e.message);
+  }
+}
+
+// 브리핑 응답을 돌려준다 — 지문이 같으면 저장된 payload, 아니면 계산 후 저장.
+// 라우트와 cron 워밍이 **둘 다 이 함수만** 호출한다(지문 계산 경로를 하나로 유지).
+export async function getBriefing(supabase) {
+  const { data: favs, error } = await supabase.from("favorites").select("*");
+  if (error) return { error: error.message };
+  // ⚠️ ★가 없을 때의 응답 형태는 그대로(Briefing.js 빈 상태 판정). 캐시하지 않는다.
+  if (!favs?.length) return { payload: { complexes: [], upcoming: [] }, cached: false, computedAt: null };
+
+  const ymds = monthsBack(currentYmd(), MONTHS);
+  const codes = [...new Set(favs.map((f) => f.lawd_cd))];
+
+  // 지문 재료 2종은 서로 무관하니 동시에 — 둘 다 실패해도 계산으로 이어간다.
+  const [latestFetched, cacheRow] = await Promise.all([
+    latestFetchedAt(supabase, codes, ymds),
+    readCache(supabase),
+  ]);
+
+  let fingerprint = null;
+  try {
+    fingerprint = buildFingerprint({ favs, latestFetched, kstDate: kstDate() });
+  } catch (e) {
+    console.error("[briefing_cache] fingerprint:", e.message);
+  }
+
+  if (fingerprint && cacheRow?.fingerprint === fingerprint) {
+    return { payload: cacheRow.payload, cached: true, computedAt: cacheRow.computed_at };
+  }
+
+  const payload = await buildBriefingPayload(favs);
+  const computedAt = new Date().toISOString();
+  if (fingerprint) await writeCache(supabase, fingerprint, payload, computedAt);
+  return { payload, cached: false, computedAt };
 }
