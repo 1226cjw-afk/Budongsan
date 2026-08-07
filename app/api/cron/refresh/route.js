@@ -9,6 +9,7 @@
 import { fetchRawMonth, fetchRawMonths, monthsBack, currentYmd } from "../../../lib/trades";
 import { cronUnauthorized } from "../../../lib/cronAuth";
 import { supabaseAdmin, noDbResponse } from "../../../lib/supabaseServer";
+import { getBriefing } from "../../../lib/briefing";
 
 const REFRESH_MONTHS = 2; // 이번달 + 지난달(지연 신고 반영). 과거달은 거의 안 변함.
 const TREND_WINDOW = 36; // 추세 3년 창 — 미캐시 달을 미리 채워 첫 3년 조회를 빠르게(과거달은 영구 캐시)
@@ -45,6 +46,20 @@ export async function GET(request) {
     results.push({ lawdCd, total, months });
   }
 
+  // 📋 브리핑 워밍 — 위 재수집으로 fetched_at이 올라가 지문이 막 무효화된 참이다.
+  // 지금 한 번 계산해 두면 그날 첫 방문이 캐시 히트로 시작한다.
+  // ⚠️ **추세 워밍보다 앞에 둘 것.** 추세 워밍은 WARM_DEADLINE_MS(40s)로 미완주분을
+  //    다음 실행에 넘기는 '양보 가능한' 작업이라, 브리핑을 뒤에 두면 데드라인에 밀려
+  //    영영 안 돌 수 있다(그러면 매일 첫 방문이 1.5s 라이브 계산으로 떨어진다).
+  // 실패는 삼킨다 — 캐시 워밍이 실거래 갱신 cron을 죽이면 안 된다(청약 수집과 같은 방침).
+  let briefingWarm;
+  try {
+    const { cached, computedAt, error: briefErr } = await getBriefing(supabaseAdmin);
+    briefingWarm = briefErr ? { error: briefErr } : { cached, computedAt };
+  } catch (e) {
+    briefingWarm = { error: e.message };
+  }
+
   // 추세 3년 캐시 워밍: 최근 2달(위에서 갱신)을 뺀 나머지 창의 미캐시 달만 수집.
   const warmYmds = monthsBack(currentYmd(), TREND_WINDOW).slice(REFRESH_MONTHS);
   const trendWarm = [];
@@ -66,6 +81,7 @@ export async function GET(request) {
     refreshedAt: new Date().toISOString(),
     regionCount: regions.length,
     monthsRefreshed: ymds,
+    briefingWarm,
     trendWarm,
     durationMs: Date.now() - started,
     results,
