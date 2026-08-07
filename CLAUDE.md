@@ -5,7 +5,15 @@
 대출 가능 여부·필요 대출액을 계산해 비교해주는 개인용 부동산 웹앱.
 참조 서비스: 네이버 부동산 / 아파트실거래 / 호갱노노 (데이터는 직접 가져오지 않고 같은 원천에서 수집).
 
-## 현황 (2026-08-04)
+## 명령어 (상세·함정은 개발 메모 참조)
+```bash
+npm run dev                      # http://localhost:3000 (카카오에 등록된 도메인이어야 지도가 뜸)
+npx next build                   # 컴파일·타입·prerender — 변경 검증 필수 1
+npm test                         # node:test 62개 — 변경 검증 필수 2 (린트는 이 프로젝트에 없음)
+```
+⚠️ 검증은 build+test **둘 다**. 셋째 축은 Playwright 실측(레이아웃 수치) — 각각 다른 버그를 잡는다.
+
+## 현황 (2026-08-07)
 MVP~3단계 + 네이버식 단지 리스트 패널(1년 상승률·재건축연한·자금여유 배지/정렬)
 + 📰 데일리 뉴스 탭(/news, cron 자동수집)까지 **배포 완료, 실서비스 가동 중**.
 **2026-07-25**: 필요자금에 부대비용(취득세·중개보수·등기비) 반영 + 월 상환액·DSR% 표시,
@@ -18,6 +26,10 @@ MVP~3단계 + 네이버식 단지 리스트 패널(1년 상승률·재건축연�
 **2026-08-04 /news를 오늘의 상황판으로**: 📊 시장 신호(해제·직거래·거래량·법인 — 시세에서
 걸러낸 거래를 지표로 되살림) · 🆕 새 거래 피드(★단지/관심지역 2탭, 각 행에 내 자금 판정) ·
 🏗 청약 레이더(수도권 분양·무순위 접수 임박순). 카드는 `components/briefing/`로 분리.
+**2026-08-05 브리핑 안정화**: 신규 카드 소멸 버그(빈 상태 판정에 signal·feed 누락) +
+청약 fetch 직렬화 + 청약 마감 UTC 판정 수정.
+**2026-08-07 브리핑 페이로드 캐시**: `/api/briefing`을 지문 기반 캐시로
+(prod 미스 1.9~2.6s → 히트 0.67~1.1s). 서버 D-day KST 교정 동반. 상세는 개발 메모.
 남은 백로그·세부 진척은 `PROGRESS.md`.
 
 **활용 루틴** (설계 의도 — 이 앱은 "탐색"이 아니라 "반복 확인" 도구):
@@ -61,12 +73,14 @@ MVP~3단계 + 네이버식 단지 리스트 패널(1년 상승률·재건축연�
 초기 목표·단계별 이력은 `PROGRESS.md` 참조.
 
 ## 개발 메모
+### 실행·배포
 - 실행: `npm run dev` → http://localhost:3000 (카카오 디벨로퍼스에 이 도메인 등록돼 있어야 지도 뜸)
   - ⚠️ **폰 실기기 검증은 LAN IP(`http://192.168.x.x:3000`) 불가** — 카카오에 미등록 도메인이라 지도가 안 뜬다. 등록된 건 `localhost:3000`과 prod URL 뿐 → 실기기 확인은 **배포 후 prod URL**이 가장 빠름(또는 크롬 F12 기기 에뮬레이션은 localhost라 OK)
 - **배포(가동 중)**: Vercel **대시보드** 방식 → https://budongsan-virid.vercel.app (env 7종 등록·카카오 Web 도메인 등록 완료). ⚠️ **Vercel CLI는 이 머신 불가**(한글 계정명→illegal HTTP header). REST 키엔 IP 제한 걸지 말 것(Vercel IP 동적)
   - GitHub `main`에 push하면 Vercel이 **자동 재배포**(대시보드 연결됨). env 변경은 Vercel 대시보드 Settings → 변경 후 Redeploy 필요. `vercel.json` cron은 push 시 자동 반영
   - 배포 반영 확인(CLI 불가): prod 홈 HTML의 `/_next/static/chunks/*.js` 파일명 해시가 배포마다 바뀜 → push 후 해시 변하는지 폴링해 안착 확인. 번들 grep은 **문자열 리터럴/CSS클래스**로(JS 변수·함수명은 minify로 사라짐). ⚠️ **서버 코드만** 바뀐 배포(API/lib)는 청크 해시가 **안 변함**(클라 번들 동일, 2026-07-02 확인) → `gh api repos/1226cjw-afk/Budongsan/commits/<sha>/status`의 Vercel context가 success("Deployment has completed")인지로 확인
   - ⚠️ push 전 `git log origin/main..main` 확인 — `main`이 **이전 세션의 미push 커밋**을 들고 있을 수 있어 push 한 번에 예상보다 많이 배포된다(2026-07-25: 세션 전부터 미push였던 `51b8d09`이 함께 나감 / 2026-08-05: **17커밋**이 누적돼 시장 신호·새 거래 피드·청약 레이더가 통째로 미배포 상태였다). ⚠️ **"웹에서 개선이 안 보인다"는 문의를 받으면 코드를 뒤지기 전에 `git log origin/main..main`부터 볼 것** — 새 라우트가 있으면 `curl -o /dev/null -w '%{http_code}' <prod>/api/<새라우트>`가 404인지로 1초에 판별된다
+### 구조 · `KakaoMap.js` 함정 (이 파일의 상습 사고 지점)
 - 구조: App Router. 지도/세부패널은 `app/components/KakaoMap.js`(클라이언트, SDK `autoload=false`로 동적 로드). **2026-07-12 리팩토링으로 분리**: 스타일 상수 → `components/mapStyles.js`(팔레트·그림자는 `lib/palette.js`, 뉴스 페이지와 공유) / 추세차트·도움말 모달 → `components/TrendChart.js`·`HelpModal.js` / 순수 헬퍼 → `lib/format.js`(포맷터·D-day)·`lib/tradeStats.js`(집계·필터)·`lib/naverLand.js`(딥링크). **2026-07-25 추가**: 브리핑 3카드 → `components/Briefing.js` / 모바일 상단바·시트 셸 → `components/MobileShell.js`. **2026-08-04 브리핑 분리**: `components/briefing/`(카드별 파일 + 공통 `styles.js`) + `components/StatTile.js`, `Briefing.js`는 fetch·localStorage·빈 상태 판정만 남은 컨테이너 — ⚠️ 카드를 더 얹을 땐 `Briefing.js`에 JSX를 쌓지 말고 `briefing/`에 파일을 추가할 것. ⚠️ 다만 **fetch는 카드가 아니라 `Briefing.js`에서** 하고 데이터는 prop으로 내릴 것 — 카드는 로딩 게이트(`data === null`) 뒤에 마운트되므로 카드 안에서 부르면 무관한 요청이 직렬화된다(2026-08-05 실측: briefing 1497ms 종료 → 1650ms에야 `/api/subscription` 시작 → 카드 노출 1907ms). ⚠️ 로딩 중 `return null` 금지 — 브리핑 영역이 0px였다가 카드가 한꺼번에 나타나 뉴스 목록을 밀어낸다(≈1.9s 뒤 레이아웃 점프) → 스켈레톤으로 자리를 잡아둘 것. ⚠️ **빈 상태 판정에 `signal`·`feed`를 반드시 포함**할 것 — 이 둘은 ★ *단지*가 아니라 관심 *지역* 기준이라, `complexes`/`upcoming`만 보면 ★ 단지에 최근 30일 거래가 없을 때 내용이 있는데도 두 카드를 버리고 "★를 담으세요" 안내를 띄운다(2026-08-05 수정: ★ 4곳 최신 거래가 7/18이라 8/17이면 신호 4개 지역·피드 60건이 사라질 예정이었음). 테스트는 `tests/*.test.mjs`(순수 lib만 — 커버 범위는 아래 "변경 검증" 참조). ⚠️ `KakaoMap.js`는 그 리팩토링으로 1263줄까지 줄었다가 **다시 1751줄로 자랐다**(2026-07-29) — 새 기능을 넣을 땐 이 파일에 쌓기 전에 분리 가능한지 먼저 볼 것
 - `KakaoMap.js` 마커 함정: 마커는 `useEffect([area,price,monthly,favorites,loanKey,priceBasis,rank])`→`renderMarkers`로 그림 → 마커에 영향 주는 새 입력은 **이 deps에 꼭 추가**(아니면 미갱신). ⚠️ deps의 `loanKey`는 자금 입력을 추린 **문자열 키**다 — `profile` 객체를 그대로 넣으면 자금 칸에 한 글자 칠 때마다 객체가 새로 생겨 마커 전량이 다시 그려진다(버벅임의 주원인, 2026-07-29 수정). 자금 관련 새 입력이 마커에 영향 주면 **`loanKey` 배열에 추가**할 것. ⚠️ 이 effect의 `dataRef.lawdCd !== lawdCd` 스킵 **stale 가드는 지우지 말 것** — 지역 전환 중 deps가 먼저 바뀌면 옛 지역 데이터로 `setBounds`가 실행돼 `fitRef`를 소진 → 지도가 새 지역으로 안 움직여 **idle 핸들러가 지역을 되돌리는 레이스**(2026-07-02 실제 발생, rank 로드가 트리거). ⚠️ `panTo`(애니메이션)와 `fitRef=true`(로드 후 setBounds)를 **같이 걸지 말 것** — 캐시가 빠르면 setBounds 위로 panTo가 마저 진행돼 화면이 밀림(2026-07-03 실제 발생) → 이동+지역전환은 `gotoFavorite`처럼 `setCenter`+`setLevel(5)`+`fitRef=false`로
 - `KakaoMap.js` 지도 이동/지역 전환 (2026-07-29 재정비 — 여기를 건드릴 땐 셋 다 유지):
@@ -87,6 +101,7 @@ MVP~3단계 + 네이버식 단지 리스트 패널(1년 상승률·재건축연�
   - 갈아타기: 프로필 `owned`(평형 카드 "보유 지정" 토글, 기준가 스냅샷) — **`assets`가 여유현금+매도 실수령 합산으로 재정의**돼 구매가능 색칠·자금 여유순·평형 비교에 자동 전파
   - **자금 관련 새 입력은 두 곳에만**: `assets` 정의(자기자금 쪽) / `calcMaxLoan`의 `requiredCash`(비용 쪽). 이 둘이 마커 색칠·리스트 배지·평형 카드·브리핑까지 전부 먹이는 단일 소스라 호출부에서 따로 더하지 말 것
 - `KakaoMap.js` 핀: 색은 `<style>`의 `.trade-pin--fav/ok/no`(자금설정 시 ok=초록/no=빨강 우선, 즐겨찾기는 ★, 급등은 🔥 프리픽스). 타지역 즐겨찾기는 `.trade-pin--away`(점선링) — `favoritesRef`(좌표 포함 전체목록)로 **현재지역 밖만** 렌더, 클릭 시 `gotoFavorite`로 이동
+### lib 코드 위치 · API 라우트 · 외부 연동
 - 코드 위치: `app/lib/`에 로직 집중 — **서버 전용(supabase 의존)**: `trades.js`(수집·지오코딩·캐시), `kapt.js`(세대수), `briefing.js`(브리핑 집계 `buildBriefingPayload` + 캐시 판정 `getBriefing` — 라우트와 cron 워밍이 공유), `supabaseServer.js`(+`noDbResponse`) / **클라 공용**: `briefingCache.js`(브리핑 지문 — 순수, `kstDate`·`buildFingerprint`. 서버만 쓰지만 supabase 미의존이라 테스트 가능), `regions.js`(서울25+경기 + 지역검증), `loanPolicy.js`(LTV/DSR·월납·필요자금), `acquisitionCost.js`(취득세·중개보수·등기비 — `loanPolicy`가 import), `news.js`(뉴스 수집·수도권 필터·분류), `applyhome.js`(청약홈 분양정보 — 아래 참조), `marketSignal.js`(시장 신호 집계), `briefingSeen.js`(브리핑 🆕 판정, localStorage — 지도 배지와 공유), `format.js`·`tradeStats.js`(집계·필터·**평 환산**·이상치 제외·중앙값)·`palette.js`·`naverLand.js` / `cronAuth.js`(cron Bearer 인증 공용). ⚠️ 실거래 코드는 **법정동 시군구 5자리** — **부천(41190)·화성(41590) 상위코드는 0건**이라 구별 코드로 등록(부천 4119x 3구 / 화성 2025신설 4159x 4구). 월 수집은 `fetchRawMonths` 일괄(캐시 `.in()` 1회 + 미스 전량 동시 — 국토부는 동시 호출 스로틀 없음, 실측 동시36=4.7s가 최속) — 미스는 `allSettled`(한 달 실패해도 나머지 살림, 전량 실패 시에만 throw→502), 반환에 `latestFetched`(최근 fetched_at) 포함 → `/api/trades` 신선도는 별도 쿼리 없이 사용(2026-07-21)
   - API(브리핑): `/api/briefing`(즐겨찾기 단지 최근 30일 거래 + D-30 내 일정 + **시장 신호 + 새 거래 피드**) — ⚠️ **캐시 전용**(`fetchRawMonths(.., {cacheOnly:true})`)이라 외부 API를 **호출하지 않는다**. cron이 채워둔 `trade_raw_cache`만 읽고, 없는 지역은 조용히 생략. 변동률은 **같은 평형의 직전 거래**와 비교(평형이 다르면 무의미). ⚠️ `MONTHS=4`를 줄이지 말 것 — `buildSignal`의 prev 창이 `asOf−90일`까지 내려가고 90일은 최악의 경우 달력월 4개를 걸친다. 짧으면 prevCount만 저평가돼 delta가 항상 "급증"으로 보인다(2026-08-03에 2→3, 08-04에 3→4). ⚠️ 피드 상한(60건)에서 **★ 단지 거래를 먼저 담는다** — 그냥 최신순으로 자르면 기본 탭인 ★가 통째로 빈다(실측: 최신 60건이 전부 7/30~8/01, ★ 거래는 7/07~7/18이라 컷 밖)
   - **브리핑 페이로드 캐시**(`briefing_cache` 0008, 2026-08-07): `/api/briefing`은 `lib/briefing.js`의 `getBriefing()`만 호출한다 — 지문(`favorites` 6필드 + 대상 행 `max(fetched_at)` + KST 날짜)이 일치하면 저장된 payload를 그대로 반환(prod 실측 미스 1.9~2.6s → 히트 0.67~1.1s, 한국→Vercel 왕복 포함). ⚠️ **지문 계산 경로는 하나여야 한다** — cron 워밍도 같은 `getBriefing()`을 부른다. 두 곳에서 각자 조립하면 재료 하나만 어긋나도 캐시가 영원히 미스가 되고, 조용히 느려질 뿐이라 눈치채기 어렵다. ⚠️ `buildFingerprint`의 `FAV_FIELDS`는 **payload가 실제로 읽는 favorites 필드와 같아야** 한다(payload가 새 필드를 읽으면 여기에도 추가 — 안 그러면 그 변경이 화면에 안 뜬다). ⚠️ 캐시 계층 실패(테이블 부재·조회 실패·지문 실패)는 **전부 라이브 계산 폴백** — 반대로 기울면 조용히 틀린 화면이 된다. ⚠️ cron 워밍은 **추세 워밍보다 앞**에 둘 것(`/api/cron/refresh`) — 추세 워밍은 40s 데드라인으로 미완주분을 다음 실행에 넘기는 양보 가능한 작업이라, 뒤에 두면 영영 안 돈다. ⚠️ 서버 D-day(`upcoming.dday`)는 `daysBetweenYmd(kstDate(), ymd)` — 예전 `setHours(0,0,0,0)` 기준은 Vercel(UTC)에서 KST 00:00~09:00에 하루 크게 나오고, 캐시하면 그 오차가 온종일 고정된다. ⚠️ 캐시 히트 payload는 계산분과 **내용은 같지만 최상위 키 순서가 뒤집힌다**(jsonb 라운드트립, 2026-08-07 prod 실측) — 검증할 때 `JSON.stringify` 비교는 항상 false다. `deepStrictEqual`로 볼 것
@@ -107,12 +122,15 @@ MVP~3단계 + 네이버식 단지 리스트 패널(1년 상승률·재건축연�
   - **1순위는 카카오 정식 단지명**(`canonicalName`) — 국토부명이 네이버 표기와 자주 다르다(`공작아파트`→`공작부영아파트`, `삼성래미안`→`비산삼성래미안아파트`). 지오코딩 때 이미 받는 값이라 추가 호출 0. 2026-07-29 안양 동안구 30곳 실측: 국토부명 21/30(70%) → 카카오명+동 24/30(**80%**), 진 사례 없음. 저장은 `geocode_cache.place_name`(0006)
   - canonicalName이 없을 때만 기존 괄호 2단계 처리: 안이 동·필지번호(숫자/영문/쉼표뿐 or `제?N(상가)동`)면 **통째 제거**(`한미(A1,A2,B)`→"한미"가 정확매칭, 2026-07-05 실측), 한글 들었으면 **공백으로 풀어 유지**(`동편마을(3단지)`→"동편마을 3단지" — 빼면 0건)
 - 자동 갱신: `vercel.json` cron 2개 — `/api/cron/refresh`(06:00 KST) + `/api/cron/news`(06:30 KST). **Hobby 한도 = 프로젝트당 cron 2개·1일1회라 꽉 참**(추가하려면 기존 라우트에 합칠 것). 라우트의 `maxDuration=60` + 추세 워밍 40s 데드라인 가드는 **지우지 말 것**(첫 워밍 타임아웃 방지, 미완주분은 다음 실행이 이어감). 보호용 `CRON_SECRET` env — 설정 시 `Authorization: Bearer <secret>` 필요(Vercel Cron이 자동 첨부). **배포 시 반드시 설정**(미설정이면 누구나 국토부 호출 트리거 가능). 로컬은 미설정이라 curl로 바로 호출 가능. `/api/trades` 응답에 `fetchedAt`(캐시 신선도) 포함
+### 스택·변경 검증
 - 스택 버전: Next.js 16 + React 19 (수동 스캐폴딩, `create-next-app` 미사용 — 기존 .md 파일 충돌 회피)
 - 변경 검증: `npx next build` (컴파일/타입 + prerender) **+ `npm test`** (순수 lib, **Node 내장 `node:test` — 의존성 0**, 2026-07-25 도입). 현재 커버: `acquisitionCost`(세율 경계값)·`loanPolicy`(gap↔neededLoan 일치성)·`format`·`tradeStats`(평 환산 경계값·이상치 제외·중앙값)·`marketSignal`(창 경계·KST 날짜·신고 지연 보정 회귀 가드, 2026-08-04 추가)·`briefingCache`(지문 — favorites 순서 무관·★ 추가/삭제/메모 반영·`fetched_at` 반영·KST 경계, 2026-08-06 추가)·`format.daysBetweenYmd`(타임존 무관 D-day — 총 62개). ⚠️ `node --test tests/`(디렉터리 형태)는 `MODULE_NOT_FOUND`로 **실패** → 글로브를 따옴표로: `node --test "tests/*.test.mjs"`. ⚠️ `MODULE_TYPELESS_PACKAGE_JSON` 경고는 무해 — 없애려고 `package.json`에 `"type":"module"` **추가 금지**(Next 빌드 깨짐). ⚠️ **린트는 이 프로젝트에 없다** — eslint 설정·의존성 미설치. `package.json`의 `lint` 스크립트는 Next 15 잔재라 Next 16에선 **실행 실패**(`next lint` 서브커맨드 제거 → `lint`를 디렉터리로 해석), 그래서 2026-07-25에 스크립트를 지웠다. 검증은 build+test 둘이 전부. ⚠️ `KakaoMap.js`의 `// eslint-disable-next-line react-hooks/exhaustive-deps` 주석들은 린트가 없어 **무효지만 "deps를 의도적으로 뺐다"는 표시라 지우지 말 것**(deps 함정이 이 파일의 상습 사고 지점).
   - 검증 3종의 역할이 다르다(2026-07-25 각각 실제로 다른 버그를 잡음): **`npm test`** = 계산 불변식(클램프로 교차검증이 죽는 것) / **Playwright 실측** = 레이아웃 수치(패딩 26px 초과) / **`npx next build`** = prerender 단계의 null 참조(JSX 변수화 가드). 스크린샷 눈대중은 마지막에.
+### 도메인 계산 규칙 (평 환산·세금·대출)
 - **평 표기는 공급면적 기준**(`tradeStats.toPyeong`, 2026-07-29): 실거래가 API는 **전용면적만** 주는데 사람들이 말하는 "34평"은 공급(전용+주거공용) 기준이라, 전용을 그냥 3.3058로 나누면 국평 84㎡가 25평으로 나와 어긋난다 → `전용㎡ × SUPPLY_RATIO(1.33) ÷ 3.3058`. 검증: 84.96㎡→34평(실제 공급 111.98㎡=33.9평) / 60→24 / 75→30 / 135→54. ⚠️ 단지별 전용률이 71~78%로 흩어져 **±1평 오차**가 있는 근사치다(정확히 하려면 단지별 공급면적을 따로 받아야 하는데 누락이 많아 근사로 감). ⚠️ 화면의 "N평"은 전부 이 함수를 거칠 것 — `AREA_FILTERS` 라벨(~24평/24~34평/34~54평/54평~)도 이 환산과 맞춰져 있고 `tests/tradeStats.test.mjs`가 경계값을 지킨다
 - 세금·수수료(`acquisitionCost.js`): 취득세(지방세법 §11①8, 6억↓1%/6~9억 선형/9억↑3%)·지방교육세(세율×1/10, 중과 시 0.4% 고정)·농특세(**전용 85㎡ 초과만** 0.2%)·중개보수(공인중개사법 시행규칙 별표1 + VAT)·등기비. ⚠️ 등기비 `REGISTRY_RATE`/`REGISTRY_FIXED`만 **법령 아닌 경험치 근사**(채권 할인손실이 시세 의존) — 실제 견적 겪으면 이 둘만 교체. ⚠️ `householdType`이 3단계뿐이라 **`다주택`=2주택 취급**(조정 8%), 3주택 이상 12%는 미구현(사용자가 무주택/최대 1주택이라 미발생, 2026-07-25 결정)
 - ⚠️ `calcMaxLoan`의 `neededLoan`은 **`maxLoan`으로 클램프하지 말 것** — 한도를 넘는 것 자체가 자금 부족 신호이고, `gap ≥ 0 ⟺ maxLoan ≥ neededLoan` 교차검증이 여기서 나온다(클램프하면 부등식이 항상 참이 돼 검증이 죽음). 월납·DSR은 실제 받게 될 `plannedLoan = min(neededLoan, maxLoan)` 기준. 월납은 **실제 금리**, DSR은 **스트레스 금리** — 둘이 다른 게 정상(HelpModal에서 설명)
+### 검증·디버깅 방법 (API 확인 · Playwright · 단독 스크립트)
 - API 동작 확인: `npm run dev`(백그라운드) → 로그 "Ready" 대기 → `curl "http://localhost:3000/api/trades?lawdCd=11680&dealYmd=202605"`
 - UI 시각 검증(브라우저): `npm i --no-save playwright` + `chromium.launch({channel:"chrome",headless:true})` — **설치된 크롬 사용, 브라우저 다운로드 없음**(이 머신 검증됨). 임시 `scripts/tmp-*.mjs`로 실클릭·스크린샷 후 삭제
   - **선택자**: 이 앱은 인라인 스타일이라 클래스 훅이 `.trade-pin`·`.cx-row`뿐 → `page.$$eval("div", …)` 같은 광범위 선택자는 body를 통째로 잡아 출력이 폭발한다(엄격한 정규식으로 좁힐 것)
@@ -124,12 +142,14 @@ MVP~3단계 + 네이버식 단지 리스트 패널(1년 상승률·재건축연�
 - lib·외부 API 단독 검증(dev서버 불필요): 임시 `scripts/*.mjs`에서 `.env.local` 수동 파싱(`process.env` 주입)→ `await import("../app/lib/..")`→ `fetch`. 지오코딩률 측정·data.go.kr 응답 확인에 유용. `app/lib` import 시 `MODULE_TYPELESS_PACKAGE_JSON` 경고는 무해(grep로 필터). 끝나면 스크립트 삭제(커밋 금지)
   - ⚠️ **"이상해 보인다"는 증상은 원본 응답을 전수 덤프해 태그·분포부터 확인할 것.** 추세 그래프 이상치를 "표본 부족이라 어쩔 수 없다"로 넘길 뻔했는데, 원본 XML의 태그 목록을 찍어보니 `cdealType`(해제)·`dealingGbn`(직거래)이 파서에서 통째로 누락돼 있었다(2026-07-29 — 이 세션 최대 성과). 가설로 고치기 전에 원본부터.
   - ⚠️ `trades.js`는 단독 `import` 불가: 내부 `./supabaseServer`(확장자 없는 import)를 raw node가 못 찾아 `ERR_MODULE_NOT_FOUND`로 죽음. supabase 미의존 lib(`regions`/`loanPolicy`/`news`)는 OK — `news.js`는 이를 위해 `./regions.js` **확장자 import** 유지(새 lib도 이 패턴 권장). trades 계열 검증은 국토부/카카오 API를 **직접 fetch**해 우회(엔드포인트/헤더는 `trades.js`에서 복사)
+### 이 머신의 셸·환경 함정 (Git Bash · PowerShell · 한글)
 - ⚠️ Git Bash에서 `curl -o /tmp/x` 한 파일을 node가 못 읽음(win 경로 불일치) → 응답은 **stdin 파이프**나 cwd 상대경로로 받을 것
 - ⚠️ dev 서버 좀비: 새 `npm run dev`가 "Another next dev server is already running"으로 죽으면 stale 프로세스가 락 점유 → PowerShell `Get-CimInstance Win32_Process -Filter "Name='node.exe'" | ?{$_.CommandLine -match 'next'} | %{Stop-Process $_.ProcessId -Force}` 로 정리 (bash `pkill -f next`는 불안정)
 - ⚠️ 한글 인자 API 테스트는 bash `curl`로 금지(명령줄 UTF-8 깨져 DB에 깨진 값 저장) → `node -e`의 `fetch`+`encodeURIComponent` 사용
 - ⚠️ bash에서 `node -e "..."` 인라인 JS에 백틱 템플릿 리터럴 금지(명령치환으로 해석돼 bad substitution) → 문자열 연결(`'['+x+']'`)로
 - ⚠️ 한글 커밋 메시지는 PowerShell here-string(`git commit -m @'...'@`)이 괄호·특수문자에서 깨져 실패 → 임시파일에 쓰고 `git commit -F <file>` (검증됨). 임시파일은 **Write 도구**로 쓸 것 — PS5.1 `Set-Content -Encoding utf8`은 **BOM을 붙여 커밋 제목 첫머리에 U+FEFF가 박힘**(2026-07-02 실제 발생). 경로는 `.git\COMMIT_MSG_TMP.txt`처럼 **.git 폴더 안**에 두면 git status에 안 잡혀 오염 없음(이전 세션 잔재가 남아 있으니 Write 전 Read 필요)
 - ⚠️ PowerShell `Invoke-WebRequest .Content`는 한글 JSON을 코드페이지로 잘못 디코드 → **.NET 문자열 자체가 깨짐**(콘솔 표시뿐 아님). 읽은 한글 값을 **재요청에 쓰면 서버 매칭 실패**(추세가 0건처럼 보임) → 한글 round-trip 검증은 `node` fetch로
+### 그 외 구현 메모
 - 지도: SDK URL에 `&libraries=services` 필요. 좌표→지역은 `geocoder.coord2RegionCode`(대문자 R·C, 오타 주의)
 - `/api/trades`는 단지별 `trades[]`(area 포함) 전체 반환 → 면적 등 추가 필터는 재요청 없이 클라(`KakaoMap.js`의 `renderMarkers`)에서 처리
 
