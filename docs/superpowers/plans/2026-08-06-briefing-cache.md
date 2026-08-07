@@ -55,7 +55,7 @@
     `favs`는 `favorites` 행 배열(`{lawd_cd, umd_nm, apt_nm, lease_end, note, note_date, ...}`),
     `latestFetched`는 ISO 문자열 또는 `null`, `kstDate`는 `"YYYY-MM-DD"` 문자열.
 
-- [ ] **Step 1: 실패하는 테스트를 쓴다**
+- [x] **Step 1: 실패하는 테스트를 쓴다**
 
 `tests/briefingCache.test.mjs`:
 
@@ -120,12 +120,12 @@ test("날짜가 바뀌면 지문이 바뀐다", () => {
 });
 ```
 
-- [ ] **Step 2: 테스트를 돌려 실패를 확인한다**
+- [x] **Step 2: 테스트를 돌려 실패를 확인한다**
 
 Run: `npm test`
 Expected: FAIL — `Cannot find module ... app/lib/briefingCache.js`
 
-- [ ] **Step 3: 최소 구현을 쓴다**
+- [x] **Step 3: 최소 구현을 쓴다**
 
 `app/lib/briefingCache.js`:
 
@@ -167,12 +167,12 @@ export function buildFingerprint({ favs = [], latestFetched = null, kstDate: day
 }
 ```
 
-- [ ] **Step 4: 테스트를 돌려 통과를 확인한다**
+- [x] **Step 4: 테스트를 돌려 통과를 확인한다**
 
 Run: `npm test`
 Expected: PASS — 기존 50개 + 신규 9개 = **59 pass / 0 fail**
 
-- [ ] **Step 5: 커밋**
+- [x] **Step 5: 커밋**
 
 ```bash
 git add app/lib/briefingCache.js tests/briefingCache.test.mjs
@@ -191,7 +191,7 @@ git commit -F .git/COMMIT_MSG_TMP.txt
 - Consumes: 없음
 - Produces: `public.briefing_cache` 테이블 — 컬럼 `id smallint PK(=1)`, `fingerprint text`, `payload jsonb`, `computed_at timestamptz`. Task 4의 `readCache`/`writeCache`가 이 이름들을 그대로 쓴다.
 
-- [ ] **Step 1: 마이그레이션 파일을 쓴다**
+- [x] **Step 1: 마이그레이션 파일을 쓴다**
 
 `supabase/migrations/0008_briefing_cache.sql`:
 
@@ -213,12 +213,12 @@ create table if not exists public.briefing_cache (
 alter table public.briefing_cache enable row level security;
 ```
 
-- [ ] **Step 2: supabase MCP로 적용한다**
+- [x] **Step 2: supabase MCP로 적용한다**
 
 `mcp__supabase__apply_migration` — `name: "0008_briefing_cache"`, `query`: 위 SQL 전문.
 (⚠️ 실패하면 대시보드 **SQL Editor** 폴백. 2026-07-08 이후 MCP `apply_migration`은 동작 확인됨.)
 
-- [ ] **Step 3: 테이블이 생겼는지 확인한다**
+- [x] **Step 3: 테이블이 생겼는지 확인한다**
 
 `mcp__supabase__execute_sql` — `query`:
 ```sql
@@ -227,7 +227,7 @@ where table_name = 'briefing_cache' order by ordinal_position;
 ```
 Expected: 4행 — `id smallint` / `fingerprint text` / `payload jsonb` / `computed_at timestamp with time zone`
 
-- [ ] **Step 4: 커밋**
+- [x] **Step 4: 커밋**
 
 ```bash
 git add supabase/migrations/0008_briefing_cache.sql
@@ -259,7 +259,7 @@ KST 00:00~09:00 구간에 D-day가 하루 크게 나온다. 지금은 그 시간
 **cron이 06:00 KST에 계산한 페이로드를 하루 종일 재사용하는 순간 그 오차가 온종일 고정된다** →
 캐시를 얹기 전에 반드시 고쳐야 한다.
 
-- [ ] **Step 1: `daysBetweenYmd`의 실패하는 테스트를 쓴다**
+- [x] **Step 1: `daysBetweenYmd`의 실패하는 테스트를 쓴다**
 
 `tests/format.test.mjs` 맨 아래에 추가(맨 위 import에 `daysBetweenYmd`를 합류시킬 것):
 
@@ -284,12 +284,12 @@ test("daysBetweenYmd: 형식이 잘못되면 null", () => {
 });
 ```
 
-- [ ] **Step 2: 테스트를 돌려 실패를 확인한다**
+- [x] **Step 2: 테스트를 돌려 실패를 확인한다**
 
 Run: `npm test`
 Expected: FAIL — `daysBetweenYmd is not a function` (또는 import 오류)
 
-- [ ] **Step 3: `daysBetweenYmd`를 구현한다**
+- [x] **Step 3: `daysBetweenYmd`를 구현한다**
 
 `app/lib/format.js`의 `daysUntil` 바로 아래에 추가:
 
@@ -309,12 +309,12 @@ export function daysBetweenYmd(fromYmd, toYmd) {
 }
 ```
 
-- [ ] **Step 4: 테스트를 돌려 통과를 확인한다**
+- [x] **Step 4: 테스트를 돌려 통과를 확인한다**
 
 Run: `npm test`
 Expected: PASS — 62 pass / 0 fail
 
-- [ ] **Step 5: 추출 **전** 응답을 기록해둔다 (parity 기준선)**
+- [x] **Step 5: 추출 **전** 응답을 기록해둔다 (parity 기준선)**
 
 먼저 dev 서버를 띄운다(백그라운드): `npm run dev` → 로그에 "Ready" 뜰 때까지 대기.
 
@@ -341,7 +341,7 @@ console.log(out, "· complexes", j.complexes?.length, "· feed", j.feed?.length,
 Run: `node scripts/tmp-briefing-parity.mjs .git/briefing-base.json`
 Expected: 개수들이 찍히고 파일 생성. 이 숫자와 시간(1.2~1.7s 예상)을 기록해둘 것.
 
-- [ ] **Step 6: `app/lib/briefing.js`로 집계 로직을 옮긴다**
+- [x] **Step 6: `app/lib/briefing.js`로 집계 로직을 옮긴다**
 
 `app/api/briefing/route.js`의 상수·헬퍼·GET 본문을 **그대로** 옮기되, ①`ddayFrom`을 KST 기준으로 교정하고 ②favorites 조회는 라우트에 남긴다.
 
@@ -516,7 +516,7 @@ export async function buildBriefingPayload(favs) {
 
 ⚠️ `buildBriefingPayload`는 supabase 클라이언트를 **받지 않는다** — 집계가 쓰는 `fetchRawMonths`가 자체 클라이언트를 들고 있어 넘길 게 없다. Task 4의 `getBriefing`도 `buildBriefingPayload(favs)`로 부른다(시그니처가 중간에 바뀌지 않는다).
 
-- [ ] **Step 7: 라우트를 얇게 바꾼다**
+- [x] **Step 7: 라우트를 얇게 바꾼다**
 
 `app/api/briefing/route.js` **전체 교체**:
 
@@ -541,7 +541,7 @@ export async function GET() {
 }
 ```
 
-- [ ] **Step 8: parity — 추출 전후 응답이 완전히 같은지 확인한다**
+- [x] **Step 8: parity — 추출 전후 응답이 완전히 같은지 확인한다**
 
 Run:
 ```bash
@@ -551,14 +551,14 @@ git diff --no-index .git/briefing-base.json .git/briefing-after.json
 Expected: **diff 출력 없음(exit 0)**.
 ⚠️ `upcoming`의 `dday`만 달라졌다면 그건 KST 교정 때문이다 — 실행 시각이 KST 09:00~24:00 사이면 값이 같아야 하고, 00:00~09:00 사이면 **1 작아진 값이 맞다**(교정된 값). 그 경우 다른 키가 전부 동일한지만 확인하고 넘어갈 것.
 
-- [ ] **Step 9: 빌드·테스트·정리**
+- [x] **Step 9: 빌드·테스트·정리**
 
 Run: `npx next build` → Expected: 통과(prerender 포함)
 Run: `npm test` → Expected: 62 pass / 0 fail
 그다음 임시 파일 삭제: `rm scripts/tmp-briefing-parity.mjs .git/briefing-base.json .git/briefing-after.json`
 (⚠️ `scripts/tmp-*.mjs`는 커밋 금지 — 프로젝트 규약)
 
-- [ ] **Step 10: 커밋**
+- [x] **Step 10: 커밋**
 
 ```bash
 git add app/lib/briefing.js app/lib/format.js app/api/briefing/route.js tests/format.test.mjs
@@ -583,7 +583,7 @@ git commit -F .git/COMMIT_MSG_TMP.txt
 cron이 저장한 지문과 라우트가 계산하는 지문이 구조적으로 일치한다. 두 곳에서 각자 조립하면
 재료 하나만 어긋나도 캐시가 영원히 미스가 되고, 그건 조용히 느려질 뿐이라 눈치채기 어렵다.
 
-- [ ] **Step 1: `getBriefing`과 헬퍼를 추가한다**
+- [x] **Step 1: `getBriefing`과 헬퍼를 추가한다**
 
 `app/lib/briefing.js` — import 줄에 지문 함수를 합류시키고(`import { kstDate, buildFingerprint } from "./briefingCache";`), 파일 **맨 아래**에 추가:
 
@@ -671,7 +671,7 @@ export async function getBriefing(supabase) {
 }
 ```
 
-- [ ] **Step 2: 라우트를 `getBriefing`으로 바꾼다**
+- [x] **Step 2: 라우트를 `getBriefing`으로 바꾼다**
 
 `app/api/briefing/route.js` **전체 교체**:
 
@@ -691,12 +691,12 @@ export async function GET() {
 }
 ```
 
-- [ ] **Step 3: 빌드 + 테스트**
+- [x] **Step 3: 빌드 + 테스트**
 
 Run: `npx next build` → Expected: 통과
 Run: `npm test` → Expected: 62 pass / 0 fail
 
-- [ ] **Step 4: 로컬 실측 — 미스 → 히트**
+- [x] **Step 4: 로컬 실측 — 미스 → 히트**
 
 dev 서버가 떠 있는 상태에서 `scripts/tmp-briefing-check.mjs` 를 **Write 도구로** 생성:
 
@@ -745,7 +745,7 @@ Expected:
 
 ⚠️ 만약 2회차가 `cached=false`면 지문이 매번 달라지는 것이다 — `latestFetchedAt`이 `null`을 돌려주는지(테이블/컬럼명), `favs`에 매 호출 달라지는 값이 섞였는지 순서로 확인할 것.
 
-- [ ] **Step 5: 캐시 계층 부재 폴백을 확인한다**
+- [x] **Step 5: 캐시 계층 부재 폴백을 확인한다**
 
 `mcp__supabase__execute_sql`로 테이블을 잠시 감춘다:
 ```sql
@@ -759,7 +759,7 @@ alter table public.briefing_cache_tmp rename to briefing_cache;
 Run: `node scripts/tmp-briefing-check.mjs` → Expected: 2회차 `cached=true` 복귀.
 그다음 임시 스크립트 삭제: `rm scripts/tmp-briefing-check.mjs`
 
-- [ ] **Step 6: 커밋**
+- [x] **Step 6: 커밋**
 
 ```bash
 git add app/lib/briefing.js app/api/briefing/route.js
@@ -778,7 +778,7 @@ git commit -F .git/COMMIT_MSG_TMP.txt
 - Consumes: `getBriefing(supabase)` (Task 4)
 - Produces: cron 응답에 `briefingWarm: { cached, computedAt } | { error }`
 
-- [ ] **Step 1: import를 추가한다**
+- [x] **Step 1: import를 추가한다**
 
 `app/api/cron/refresh/route.js` 상단 import 블록에:
 
@@ -786,7 +786,7 @@ git commit -F .git/COMMIT_MSG_TMP.txt
 import { getBriefing } from "../../../lib/briefing";
 ```
 
-- [ ] **Step 2: 재수집 루프 직후, 추세 워밍 직전에 워밍을 넣는다**
+- [x] **Step 2: 재수집 루프 직후, 추세 워밍 직전에 워밍을 넣는다**
 
 `const total = months.reduce(...)` 루프가 끝나는 `}` 다음, `// 추세 3년 캐시 워밍:` 주석 **앞**에 삽입:
 
@@ -806,7 +806,7 @@ import { getBriefing } from "../../../lib/briefing";
   }
 ```
 
-- [ ] **Step 3: 응답에 실어 보낸다**
+- [x] **Step 3: 응답에 실어 보낸다**
 
 `Response.json({...})`의 `trendWarm,` 줄 **바로 위**에 `briefingWarm,` 추가:
 
@@ -823,7 +823,7 @@ import { getBriefing } from "../../../lib/briefing";
   });
 ```
 
-- [ ] **Step 4: 빌드 + 로컬 cron 호출**
+- [x] **Step 4: 빌드 + 로컬 cron 호출**
 
 Run: `npx next build` → Expected: 통과
 
@@ -834,14 +834,14 @@ node -e "const j=require('./.git/cron.json');console.log('briefingWarm',JSON.str
 ```
 Expected: `briefingWarm {"cached":false,"computedAt":"..."}` — 재수집으로 `fetched_at`이 갱신됐으니 **`cached:false`(=새로 계산해 저장)가 정상**이다. `trendWarm`도 그대로 채워져 있어야 한다.
 
-- [ ] **Step 5: 워밍이 실제로 효과가 있는지 확인한다**
+- [x] **Step 5: 워밍이 실제로 효과가 있는지 확인한다**
 
 Run: `curl -s -o /dev/null -w "%{time_total}\n" "http://localhost:3000/api/briefing"`
 그다음 `curl -s "http://localhost:3000/api/briefing" -o .git/b.json` → `node -e "console.log(require('./.git/b.json').cached)"`
 Expected: `true` — cron이 데워둔 것을 그대로 받는다(0.2s 이하).
 정리: `rm .git/cron.json .git/b.json`
 
-- [ ] **Step 6: 커밋**
+- [x] **Step 6: 커밋**
 
 ```bash
 git add app/api/cron/refresh/route.js
@@ -861,13 +861,13 @@ git commit -F .git/COMMIT_MSG_TMP.txt
 - Consumes: Task 1~5 전부
 - Produces: 없음(문서·검증)
 
-- [ ] **Step 1: push 전에 미push 커밋을 확인한다**
+- [x] **Step 1: push 전에 미push 커밋을 확인한다**
 
 Run: `git log origin/main..main --oneline`
 Expected: 이 계획의 커밋 5개만. ⚠️ 예상 밖의 커밋이 있으면 **push 전에 사용자에게 알릴 것**
 (2026-08-05에 17커밋이 누적돼 통째로 미배포였던 전례가 있다).
 
-- [ ] **Step 2: push하고 배포를 확인한다**
+- [x] **Step 2: push하고 배포를 확인한다**
 
 Run: `git push origin main`
 그다음 (서버 코드만 바뀐 배포라 **청크 해시가 안 변한다** — 커밋 상태로 확인할 것):
@@ -876,7 +876,7 @@ gh api repos/1226cjw-afk/Budongsan/commits/$(git rev-parse HEAD)/status --jq '.s
 ```
 Expected: `success` / `Vercel success Deployment has completed`
 
-- [ ] **Step 3: prod 실측 — 히트/미스와 응답 시간**
+- [x] **Step 3: prod 실측 — 히트/미스와 응답 시간**
 
 ```bash
 for i in 1 2 3; do
@@ -888,14 +888,14 @@ node -e "for(const i of [1,2,3]){const j=require('./.git/p'+i+'.json');console.l
 Expected: 1회차는 `cached=false`(지문이 처음 저장됨, 콜드스타트 포함 3s대 가능), **2·3회차 `cached=true` + 1s 미만**. 세 응답의 `complexes`/`feed`/`signal` 개수가 서로 같아야 한다.
 정리: `rm .git/p1.json .git/p2.json .git/p3.json`
 
-- [ ] **Step 4: prod에서 ★ 즉시 반영을 확인한다**
+- [x] **Step 4: prod에서 ★ 즉시 반영을 확인한다**
 
 브라우저로 https://budongsan-virid.vercel.app 접속 → 아무 단지나 ★ 토글 → `/news` 이동 →
 ⭐관심단지 카드에 그 변경이 **즉시** 반영되는지 확인. 그다음 ★를 원래대로 되돌린다.
 (원한다면 Task 4의 `tmp-briefing-check.mjs`의 URL만 prod로 바꿔 같은 확인을 CLI로 해도 된다.)
 Expected: 지연 없음 — 지문에 favorites가 들어 있어 토글이 곧 재계산이다.
 
-- [ ] **Step 5: CLAUDE.md에 규약을 기록한다**
+- [x] **Step 5: CLAUDE.md에 규약을 기록한다**
 
 "개발 메모"의 `API(브리핑)` 항목 끝에 이어 붙일 것:
 
@@ -914,7 +914,7 @@ Expected: 지연 없음 — 지문에 favorites가 들어 있어 토글이 곧 �
     기준은 Vercel(UTC)에서 KST 00:00~09:00에 하루 크게 나오고, 캐시하면 그 오차가 온종일 고정된다.
 ```
 
-- [ ] **Step 6: PROGRESS.md에 섹션을 추가한다**
+- [x] **Step 6: PROGRESS.md에 섹션을 추가한다**
 
 `## 상태:` 줄 바로 다음(= 최신 섹션 자리)에 삽입하고, `## ▶ 다음 세션 시작점`의 "최신 작업" 줄을 이 작업으로 갱신할 것:
 
@@ -941,7 +941,7 @@ Expected: 지연 없음 — 지문에 favorites가 들어 있어 토글이 곧 �
 ```
 ⟨측정값⟩ 자리에 Step 3에서 잰 실제 숫자를 넣을 것.
 
-- [ ] **Step 7: 커밋 & push**
+- [x] **Step 7: 커밋 & push**
 
 ```bash
 git add CLAUDE.md PROGRESS.md
