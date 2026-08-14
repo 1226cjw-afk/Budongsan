@@ -29,7 +29,15 @@ export default function TrendChart({ series, areaLabel }) {
   const x = (i) => AX + (i * plotW) / (n - 1);
   const y = (v) => PADTOP + (1 - (v - min) / span) * plotH;
   const idxOf = new Map(series.map((s, i) => [s, i])); // 점 위치는 전체 series 인덱스 기준(결측월=가로 점프). indexOf O(n²) 회피.
-  const line = pts.map((p) => `${x(idxOf.get(p))},${y(p.avg)}`).join(" ");
+  // ⚠️ 선과 점은 **반드시 같은 접근자**를 통과시킬 것. 2026-07-29에 추세를 중앙값으로 바꾸면서
+  //    pts 필터·Y축 범위·점·상승판정은 value로 옮겼는데 **폴리라인만 p.avg로 남아 있었다**
+  //    (2026-08-14 발견). 그래서 선은 평균, 눈금·점·색은 중앙값을 그리고 있었다 — 중앙값 전환이
+  //    노린 "특수거래 하나에 추세선이 끌려가는 것"이 정작 선에서만 그대로 살아 있었다.
+  //    게다가 Y축 범위(min/max)를 중앙값으로만 잡으니 평균이 그 밖으로 나가는 달엔 선이
+  //    SVG 밖으로 잘렸다. 두 곳에 값을 따로 적으면 또 갈라진다 → 접근자 하나로 묶는다.
+  const px = (p) => x(idxOf.get(p));
+  const py = (p) => y(p.value);
+  const line = pts.map((p) => `${px(p)},${py(p)}`).join(" ");
   const first = pts[0];
   const last = pts[pts.length - 1];
   const mid = pts[Math.floor(pts.length / 2)];
@@ -50,7 +58,7 @@ export default function TrendChart({ series, areaLabel }) {
         ))}
         <polyline points={line} fill="none" stroke={stroke} strokeWidth="2" />
         {!dense && pts.map((p) => (
-          <circle key={p.ymd} cx={x(idxOf.get(p))} cy={y(p.value)} r="2.5" fill={stroke} />
+          <circle key={p.ymd} cx={px(p)} cy={py(p)} r="2.5" fill={stroke} />
         ))}
       </svg>
       <div

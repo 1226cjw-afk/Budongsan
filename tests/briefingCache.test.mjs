@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildFingerprint, kstDate } from "../app/lib/briefingCache.js";
+import { buildFingerprint } from "../app/lib/briefingCache.js";
 
 const FAVS = [
   { id: 1, lawd_cd: "41173", umd_nm: "호계동", apt_nm: "평촌어바인퍼스트",
@@ -46,13 +46,20 @@ test("캐시가 비어 latestFetched가 null이어도 터지지 않는다", () =
   assert.match(fp({ latestFetched: null }), /^[0-9a-f]{16}$/);
 });
 
-// ⚠️ KST 경계 회귀 가드. UTC로 계산하면 KST 00:00~08:59에 어제 날짜가 나와
-//    자정을 넘겨도 옛 30일 창·D-day를 재사용하게 된다(이 프로젝트 4번째 재발 지점).
-test("UTC 15:00 = KST 익일 00:00에서 날짜가 넘어간다", () => {
-  assert.equal(kstDate(Date.parse("2026-08-05T14:59:59Z")), "2026-08-05");
-  assert.equal(kstDate(Date.parse("2026-08-05T15:00:00Z")), "2026-08-06");
-});
-
+// KST 경계 자체의 회귀 가드는 tests/format.test.mjs(kstDate)로 옮겼다 —
+// 오프셋이 lib/format.js 한 곳으로 모이면서 여기 있을 이유가 없어졌다(2026-08-14).
 test("날짜가 바뀌면 지문이 바뀐다", () => {
   assert.notEqual(fp({ kstDate: "2026-08-07" }), fp());
+});
+
+// 지문 재료 고정(golden). 재료는 "입력"(★·수집시각·날짜) + PAYLOAD_VERSION 넷뿐이고,
+// 그 조합이 바뀌면 이 값이 바뀐다.
+// ⚠️ 이 테스트가 깨졌다면 둘 중 하나다:
+//    ① PAYLOAD_VERSION을 의도적으로 올렸다 → 아래 기대값을 새 값으로 갱신하면 된다.
+//    ② 재료를 실수로 바꿨다(특히 **PAYLOAD_VERSION을 재료에서 빼는 것**) → 되돌릴 것.
+//    ②를 놓치면 payload 모양을 바꿔 배포해도 저장된 옛 payload가 그대로 나가고, KST 날짜가
+//    넘어가는 다음날 06:00 cron까지 최대 하루 동안 "배포했는데 화면이 그대로"가 된다
+//    (캐시 도입 2026-08-07 ~ 2026-08-14 사이 이 탈출구가 아예 없었다).
+test("지문 재료가 고정돼 있다 (PAYLOAD_VERSION 포함)", () => {
+  assert.equal(fp(), "3ead067992b1adea"); // PAYLOAD_VERSION = 1
 });

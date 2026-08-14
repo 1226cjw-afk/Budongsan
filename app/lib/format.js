@@ -1,5 +1,21 @@
 // 표시용 포맷터·날짜 헬퍼 (클라이언트 공용, 의존성 없음).
 
+// ⚠️ **KST 달력 날짜의 단일 지점.** Vercel 함수는 UTC로 돌기 때문에 toISOString()을 그대로
+//    쓰면 KST 00:00~08:59(= UTC 전날 15:00~23:59) 구간에 어제 날짜가 나온다. 이 앱의 cron은
+//    06:00·06:30 KST라 **매일 이 구간에서 돈다** — 그래서 "오늘"을 UTC로 세면 매일 틀린다.
+//    이 프로젝트에서 같은 버그가 네 번 재발했다(marketSignal 창 / briefing cutoff·D-day /
+//    /api/subscription 마감 판정 / 지도 보유주택 스냅샷 날짜). 넷이 각자 오프셋을 더하고
+//    있었기에 하나를 고쳐도 나머지가 남았다 → 2026-08-14에 여기로 모았다.
+//    ⚠️ **날짜 비교·표시는 전부 이 함수를 거칠 것.** 새로 `+ 9*60*60*1000`을 적고 있다면
+//       그건 다섯 번째 재발이다. 의존성이 없는 이 파일에 둔 이유는 서버(라우트·집계)와
+//       클라(지도) 양쪽이 같은 함수를 써야 두 화면의 날짜가 어긋나지 않기 때문이다.
+const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
+
+// 주어진 시각(기본 지금)의 KST 달력 날짜 "YYYY-MM-DD".
+export function kstDate(nowMs = Date.now()) {
+  return new Date(nowMs + KST_OFFSET_MS).toISOString().slice(0, 10);
+}
+
 // D-day 계산(양수 = 남음). ymd "YYYY-MM-DD".
 export function daysUntil(ymd) {
   return Math.ceil((new Date(ymd + "T00:00:00") - Date.now()) / 86400000);

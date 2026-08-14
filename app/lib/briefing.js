@@ -7,8 +7,8 @@
 
 import { fetchRawMonths, currentYmd, monthsBack } from "./trades";
 import { buildSignal } from "./marketSignal";
-import { kstDate, buildFingerprint } from "./briefingCache";
-import { daysBetweenYmd } from "./format";
+import { buildFingerprint } from "./briefingCache";
+import { daysBetweenYmd, kstDate } from "./format";
 
 const RECENT_DAYS = 30; // 브리핑에 보여줄 최근 거래 기간
 const UPCOMING_DAYS = 30; // D-day 알림 범위
@@ -23,12 +23,9 @@ const UPCOMING_DAYS = 30; // D-day 알림 범위
 export const MONTHS = 4;
 const FEED_MAX = 60; // 새 거래 피드 최대 행수 — 클라에서 자금 필터로 더 줄인다
 
-// dealYmd는 KST 달력 날짜인데 toISOString()은 UTC 날짜를 준다 → Vercel은 UTC로 돌고
-// cron은 06:00·06:30 KST라 매일 KST 00:00~08:59(=UTC 전날 15:00~23:59) 구간에 걸린다.
-// marketSignal.js의 ymd()와 같은 이유로 같은 보정을 쓴다 — 안 그러면 이 cutoff(기존
-// complexes/feed 창)와 buildSignal의 30일 창이 하루 어긋나, 같은 화면의 "시장 신호"
-// 카드와 "새 거래 피드" 카드가 자정 근처에 서로 다른 개수를 보여주게 된다(2026-08-03).
-const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
+// ⚠️ 창 경계는 **KST 달력 날짜**여야 한다(format.kstDate). 안 그러면 이 cutoff(complexes/
+//    feed 창)와 buildSignal의 창이 자정 근처에 하루 어긋나, 같은 화면의 "시장 신호" 카드와
+//    "새 거래 피드" 카드가 서로 다른 개수를 보여준다(2026-08-03). 보정은 format.js 한 곳에만.
 
 export async function buildBriefingPayload(favs) {
   // 즐겨찾기가 걸린 지역만 캐시에서 읽는다.
@@ -49,9 +46,7 @@ export async function buildBriefingPayload(favs) {
     })
   );
 
-  const cutoff = new Date(Date.now() - RECENT_DAYS * 86400000 + KST_OFFSET_MS)
-    .toISOString()
-    .slice(0, 10);
+  const cutoff = kstDate(Date.now() - RECENT_DAYS * 86400000);
 
   const complexes = [];
   for (const f of favs) {

@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { REGIONS, ALL_REGIONS, regionName } from "../lib/regions";
 import { calcMaxLoan, isRegulated } from "../lib/loanPolicy";
 import { C } from "../lib/palette";
-import { daysUntil, leaseLabel, formatManwon, shortDate, formatAgo, monthsToLabel } from "../lib/format";
+import { daysUntil, leaseLabel, formatManwon, shortDate, formatAgo, monthsToLabel, kstDate } from "../lib/format";
 import { favKey, distMeters, summarize, groupByPyeong, filterTrades } from "../lib/tradeStats";
 import { naverLandUrl } from "../lib/naverLand";
 import { countNew } from "../lib/briefingSeen";
@@ -294,6 +294,21 @@ export default function KakaoMap() {
     });
   }
 
+  // 평형 카드 한 장(groupByPyeong의 g)에 대한 대출 계산.
+  // ⚠️ **마커/리스트(bestFit)와 세부패널이 반드시 같은 입력을 쓰게** 하려고 한 곳에 모았다 —
+  //    기준가 선택(priceBasis)과 area 전달이 여기 한 번만 적힌다.
+  //    예전엔 세부패널이 같은 계산을 따로 적으면서 `loanForPrice(gp)`로 **area(g.m2)를
+  //    빠뜨렸다**. 그래서 전용 85㎡ 초과 평형에서 농어촌특별세(0.2%, 중과 시 0.6%)가 통째로
+  //    빠져 필요자금이 작게 나왔다(2026-08-14 실측: 11억 40평 −220만원 / 12억 54평 −238만원).
+  //    같은 평형인데 리스트 배지는 "부족", 세부 카드는 "여유"가 뜰 수 있었다. 결정적 증거는
+  //    카드 안의 "농어촌특별세 (85㎡ 초과)" 행 — area가 늘 0이라 조건이 영원히 거짓이었고
+  //    한 번도 렌더된 적이 없는 죽은 코드였다.
+  function loanForGroup(g) {
+    const gp = priceBasis === "recent" ? g.recentAmount : g.avg;
+    const ln = loanForPrice(gp, g.m2); // ⚠️ g.m2 = 농특세(85㎡ 초과) 판정 기준. 빼지 말 것
+    return { ln, gap: ln ? assets - ln.requiredCash : null };
+  }
+
   // 한 단지에서 "대출 가능 + 월납 상한 이내"인 평형 중 자금 여유가 최대인 것.
   // 반환 {gap, monthly} — 조건을 만족하는 평형이 없으면 null.
   // priceBasis(최근/평균) 기준가 사용. 마커 색칠(여유 ≥ 0 = 초록)과 리스트 여유 배지·정렬이 이 계산을 공유.
@@ -303,12 +318,10 @@ export default function KakaoMap() {
     const cap = (MONTHLY_FILTERS.find((m) => m.value === monthly) ?? MONTHLY_FILTERS[0]).max;
     let best = null;
     for (const g of groupByPyeong(hits)) {
-      const gp = priceBasis === "recent" ? g.recentAmount : g.avg;
-      const ln = loanForPrice(gp, g.m2);
+      const { ln, gap } = loanForGroup(g);
       if (!ln || ln.maxLoan <= 0) continue;
       if (ln.monthlyPayment > cap) continue;
-      const d = assets - ln.requiredCash;
-      if (!best || d > best.gap) best = { gap: d, monthly: ln.monthlyPayment };
+      if (!best || gap > best.gap) best = { gap, monthly: ln.monthlyPayment };
     }
     return best;
   }
@@ -530,7 +543,10 @@ export default function KakaoMap() {
         area: g.m2,
         priceRecent: g.recentAmount || 0,
         priceAvg: Math.round(g.avg) || 0,
-        capturedYmd: new Date().toISOString().slice(0, 10),
+        // ⚠️ toISOString()은 UTC 날짜다 — 브라우저가 KST여도 00:00~08:59엔 어제가 찍혀
+        //    "07-31 시세"로 저장된 스냅샷이 화면에 08-01로 보이지 않는다. 서버 쪽 날짜
+        //    보정과 같은 함수를 쓴다(format.kstDate).
+        capturedYmd: kstDate(),
       },
       // 보유 주택이 생기면 가구유형도 1주택으로 보정(처분조건부 — LTV 규칙은 무주택과 동일).
       ...(profile.householdType === "무주택" ? { householdType: "1주택" } : {}),
@@ -1450,9 +1466,7 @@ export default function KakaoMap() {
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 8 }}>
             {detail.groups.map((g) => {
-              const gp = priceBasis === "recent" ? g.recentAmount : g.avg;
-              const ln = loanForPrice(gp);
-              const gap = ln ? assets - ln.requiredCash : null;
+              const { ln, gap } = loanForGroup(g); // 마커·리스트와 같은 계산(농특세 포함)
               const isSel = trendArea === g.m2;
               return (
                 <div

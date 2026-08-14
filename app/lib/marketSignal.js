@@ -5,6 +5,8 @@
 // 빼는데(2026-07-29), 그 "걸러낸 것" 자체가 시장 신호다 — 해제 급증은 호가가 무너지는
 // 신호이고, 직거래 비중은 증여성 거래가 얼마나 섞였는지를 말해준다.
 
+import { kstDate } from "./format.js"; // 확장자 필수(raw node 단독 import — tests/marketSignal)
+
 const WINDOW_DAYS = 30;
 
 // 실거래 신고 기한은 계약일로부터 30일(부동산 거래신고 등에 관한 법률 §3①)이라
@@ -22,12 +24,9 @@ const WINDOW_DAYS = 30;
 //    ⚠️ 보정 후에도 남는 감소는 진짜다(같은 지역 월별 총계 4월 659·5월 639·6월 432).
 const REPORT_LAG_DAYS = 30;
 
-// 실거래의 dealYmd는 **KST 달력 날짜**다. toISOString()은 UTC 날짜를 주므로 그대로 쓰면
-// KST 00:00~08:59(= UTC 전날 15:00~23:59) 사이에 호출될 때 하루가 밀린다.
-// ⚠️ Vercel 함수는 UTC로 돌고 이 앱의 cron은 06:00·06:30 KST라 매일 이 구간에 걸린다
-//    (2026-08-03 리뷰가 잡음). 오프셋을 더해 KST 벽시계 날짜로 자른다.
-const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
-const ymd = (d) => new Date(d.getTime() + KST_OFFSET_MS).toISOString().slice(0, 10);
+// 실거래의 dealYmd는 **KST 달력 날짜**라 창 경계도 KST로 잘라야 한다(2026-08-03 리뷰가 잡음).
+// 보정 자체는 format.kstDate() 한 곳에 있다 — 여기서 오프셋을 다시 더하지 말 것.
+const ymd = (d) => kstDate(d.getTime());
 
 // [start, end) 안의 거래만. dealYmd는 "YYYY-MM-DD" 문자열이라 사전순 비교가 곧 날짜순이다.
 const inRange = (arr, start, end) =>
