@@ -1,7 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { lawdCdFromAddress } from "../app/lib/regions.js";
-import { extractRows, normalizeLhRow, isCapitalRegion } from "../app/lib/lhNotice.js";
+import {
+  extractRows, normalizeLhRow, isCapitalRegion, dropRevisedDuplicates,
+} from "../app/lib/lhNotice.js";
 
 // ── 공고 주소 → LAWD_CD ────────────────────────────────────
 // 청약 공고는 시군구 코드를 주지 않고 주소 문자열만 준다. 이 역매칭이 틀리면 규제지역
@@ -27,9 +29,41 @@ test("목록 밖 지역은 null (임의의 코드로 붙지 않는다)", () => {
 });
 
 // ── LH 응답 파서 ───────────────────────────────────────────
-// ⚠️ 이 파서는 **실응답을 못 본 채** 작성됐다(활용신청 전이라 403). 그래서 응답 모양이
-//    바뀌어도 죽지 않는지를 테스트로 고정한다. 승인 후 실제 키가 확인되면 이 테스트에
-//    실제 샘플을 한 건 추가할 것.
+// ✅ 아래 REAL_ROW는 2026-08-15 승인 직후 받은 **실응답 한 행 그대로**다. 이 파서가 문서만
+//    보고 짐작한 게 아니라는 근거이자, 응답 모양이 바뀌면 걸리는 회귀 가드다.
+const REAL_ROW = {
+  PAN_NT_ST_DT: "2026.08.14",
+  PAN_ID: "0000061156",
+  AIS_TP_CD_NM: "행복주택",
+  CNP_CD_NM: "경기도",
+  ALL_CNT: "243",
+  SPL_INF_TP_CD: "060",
+  AIS_TP_CD: "08",
+  PAN_DT: "20260814",
+  RNUM: "2",
+  CCR_CNNT_SYS_DS_CD: "02",
+  DTL_URL: "https://apply.lh.or.kr/lhapply/apply/wt/wrtanc/selectWrtancInfo.do?panId=0000061156",
+  CLSG_DT: "2026.08.25",
+  UPP_AIS_TP_CD: "06",
+  PAN_NM: "의왕고천A-1BL[리츠]·안양명학A-1BL 행복주택 예비입주자 모집",
+  UPP_AIS_TP_NM: "임대주택",
+  PAN_SS: "공고중",
+};
+
+test("LH 실응답 한 행이 기대대로 정규화된다", () => {
+  const r = normalizeLhRow({ row: REAL_ROW, label: "임대" });
+  assert.equal(r.houseManageNo, "LH:0000061156");
+  assert.equal(r.detailKind, "행복주택");
+  assert.equal(r.region, "경기도");
+  assert.equal(r.receiptEnd, "2026-08-25"); // "2026.08.25" 점 구분 정규화
+  assert.equal(r.state, "공고중");
+  // ⚠️ 이 API는 주소·세대수·당첨자발표일·접수시작일을 **주지 않는다**. 없는 걸 채운 척하면
+  //    카드가 "접수 08-14~"처럼 공고게시일을 접수일로 찍는다 → 전부 null이어야 한다.
+  assert.equal(r.receiptStart, null);
+  assert.equal(r.households, null);
+  assert.equal(r.winnerDate, null);
+  assert.equal(r.address, "");
+});
 test("LH 응답: dsList 래핑을 벗긴다", () => {
   const json = [{ resHeader: { RS_CODE: "00" } }, { dsList: [{ PAN_NM: "행복주택" }] }];
   assert.deepEqual(extractRows(json), [{ PAN_NM: "행복주택" }]);
@@ -80,6 +114,39 @@ test("LH 정규화: 상세 URL이 없어도 유효한 링크를 준다", () => {
     label: "임대",
   });
   assert.equal(rel.url, "https://apply.lh.or.kr/lhapply/x.do");
+});
+
+// 사업자 공모가 입주자 모집과 한 목록에 섞여 온다 — 마감이 이르면 카드 맨 윗줄을 먹는다.
+test("운영기관 공모는 카드에서 걸러낼 이름 규칙에 걸린다", () => {
+  const NOT_FOR_TENANTS = /운영기관|운영업체|사업자\s*공모/;
+  assert.ok(NOT_FOR_TENANTS.test("2026년 하반기 매입임대 공동생활가정 운영기관 모집공고"));
+  // ⚠️ 진짜 입주자 공고를 삼키면 안 된다 — 규칙을 넓힐 때 여기가 걸림돌이 되어야 한다.
+  assert.ok(!NOT_FOR_TENANTS.test("파주시 행복주택 예비입주자 모집공고(26.08.07)"));
+  assert.ok(!NOT_FOR_TENANTS.test("[청년신혼부부매입임대리츠]_경기북부지역 입주자 모집"));
+  assert.ok(!NOT_FOR_TENANTS.test("26년 2차 부산 분양전환형 든든전세 입주자 모집 공고"));
+});
+
+// 정정공고와 원공고가 둘 다 살아서 온다 — 6칸 카드에서 중복 두 쌍이면 표시 후보의 40%다.
+test("정정공고가 원공고를 대체한다 (먼저 온 것 = 정정본)", () => {
+  const rows = [
+    // 응답은 게시일 최신순 → 정정본이 먼저 온다.
+    { name: "[정정공고]남양주 장현5 2BL 행복주택 모집", receiptEnd: "2026-08-20" },
+    { name: "남양주 장현5 2BL 행복주택 모집", receiptEnd: "2026-08-20" },
+    { name: "김포시 행복주택 모집", receiptEnd: "2026-08-20" },
+  ];
+  const out = dropRevisedDuplicates(rows);
+  assert.equal(out.length, 2);
+  assert.equal(out[0].name, "[정정공고]남양주 장현5 2BL 행복주택 모집");
+  assert.equal(out[1].name, "김포시 행복주택 모집");
+});
+
+// ⚠️ 마감일이 다르면 다른 공고다 — 이름만 보고 합치면 진짜 공고가 사라진다.
+test("같은 이름이라도 마감일이 다르면 남긴다", () => {
+  const rows = [
+    { name: "파주시 행복주택 모집", receiptEnd: "2026-08-19" },
+    { name: "파주시 행복주택 모집", receiptEnd: "2026-09-30" },
+  ];
+  assert.equal(dropRevisedDuplicates(rows).length, 2);
 });
 
 test("수도권 판정", () => {
