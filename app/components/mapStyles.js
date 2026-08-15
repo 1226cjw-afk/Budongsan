@@ -90,6 +90,16 @@ export const favSaveBtn = {
   borderWidth: 1, borderStyle: "solid", borderColor: C.blue,
   background: C.blue, color: "#fff", cursor: "pointer", transition: TRANSITION,
 };
+// ⚠️ 즐겨찾기 해제는 **여기서도** 되어야 한다. 지도 핀으로만 풀 수 있게 두면 지울 방법이
+//    사라지는 경우가 있다: 단지 핀은 면적·가격 필터를 통과한 거래가 있어야만 그려지고
+//    (renderMarkers), 타지역 ★ 폴백은 현재 지역을 제외한다 → 필터에 걸리거나 그 달 거래가
+//    없는 ★ 단지는 지도에서 완전히 사라져 세부패널의 ★ 버튼에 도달할 수 없다.
+//    2026-08-15 실제 발생(구로구 예원아파트 · 94.63㎡ = 공급 38평이라 "24~34평" 필터 하나로 재현).
+export const favDelBtn = {
+  flexShrink: 0, marginLeft: 4, fontSize: 11, padding: "0 6px", borderRadius: 7,
+  borderWidth: 1, borderStyle: "solid", borderColor: C.border,
+  background: "#fff", color: C.red, cursor: "pointer", transition: TRANSITION,
+};
 
 // 단지 리스트 패널(네이버식) — 정렬 바 + 행 목록.
 export const sortBar = {

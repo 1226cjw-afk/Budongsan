@@ -6,6 +6,7 @@
 
 import { fetchNews, newsKeywords, newsSource } from "../../../lib/news";
 import { fetchSubscriptions } from "../../../lib/applyhome";
+import { fetchLhNotices } from "../../../lib/lhNotice";
 import { cronUnauthorized } from "../../../lib/cronAuth";
 import { supabaseAdmin, noDbResponse } from "../../../lib/supabaseServer";
 
@@ -69,10 +70,21 @@ export async function GET(request) {
 
   // 🏗 청약 수집 — Vercel Hobby는 프로젝트당 cron 2개가 한도라(refresh 06:00 + news 06:30)
   //    새 cron을 만들 수 없어 여기 합친다. 미승인·장애면 []가 와서 조용히 넘어간다.
+  //    소스 2종(청약홈 분양·무순위 / LH 임대·분양)은 **서로 독립**이라 나란히 출발시키고
+  //    한쪽이 죽어도 다른 쪽은 저장한다 — LH는 활용신청 전까지 계속 실패하는 게 정상이다.
   let subscriptions = 0;
   let subscriptionError;
+  let lh = null;
   try {
-    const subs = await fetchSubscriptions();
+    const [applyhome, lhResult] = await Promise.all([
+      fetchSubscriptions(),
+      fetchLhNotices().catch((e) => ({ items: [], error: e.message, sampleKeys: null })),
+    ]);
+    // ⚠️ lh.sampleKeys는 진단용이다 — LH 응답 필드명을 실물로 검증하지 못한 채 작성했으므로
+    //    (활용신청 전이라 403), 승인 후 첫 실행의 이 값으로 키가 맞는지 확인해야 한다.
+    lh = { count: lhResult.items.length, error: lhResult.error, sampleKeys: lhResult.sampleKeys };
+
+    const subs = [...applyhome, ...lhResult.items];
     if (subs.length) {
       const { error } = await supabaseAdmin.from("subscription_items").upsert(
         subs.map((s) => ({
@@ -86,6 +98,14 @@ export async function GET(request) {
           winner_date: s.winnerDate,
           households: s.households,
           url: s.url,
+          agency: s.agency,
+          detail_kind: s.detailKind,
+          spsply_start: s.spReceiptStart,
+          spsply_end: s.spReceiptEnd,
+          models: s.models,
+          price_min: s.priceMin,
+          price_max: s.priceMax,
+          lawd_cd: s.lawdCd ?? null,
           fetched_at: new Date().toISOString(),
         })),
         { onConflict: "house_manage_no" }
@@ -107,6 +127,7 @@ export async function GET(request) {
     inserted,
     subscriptions,
     subscriptionError,
+    lh,
     pruneError: pruneError?.message,
     durationMs: Date.now() - started,
   });

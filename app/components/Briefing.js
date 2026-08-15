@@ -122,7 +122,7 @@ export default function Briefing({ news }) {
         <div style={emptyHint}>
           지도에서 <b>★</b>로 관심 단지를 담으면, 여기에 그 단지의 새 실거래와 일정이 떠요.
         </div>
-        <SubscriptionCard items={subs} />
+        <SubscriptionCard items={subs} profile={profile} assets={assets} hasIncome={hasIncome} />
       </div>
     );
   }
@@ -149,7 +149,8 @@ export default function Briefing({ news }) {
           hasIncome={hasIncome}
         />
       )}
-      <SubscriptionCard items={subs} />
+      {/* 청약도 지도와 같은 calcMaxLoan으로 자금 판정을 붙인다 → profile·assets가 필요하다. */}
+      <SubscriptionCard items={subs} profile={profile} assets={assets} hasIncome={hasIncome} />
       {impact.length > 0 && <ImpactNewsCard news={impact} hasIncome={hasIncome} />}
     </div>
   );

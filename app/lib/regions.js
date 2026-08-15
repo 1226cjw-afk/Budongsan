@@ -105,6 +105,24 @@ export function regionPrefix(code) {
   return r ? `${r.sido} ${r.name}` : "";
 }
 
+// 공고 주소("서울특별시 구로구 오리로1165") → LAWD_CD. 청약 공고는 시군구 코드를 주지 않고
+// 주소 문자열만 주는데, 규제지역 판정(loanPolicy.isRegulated)에는 코드가 필요해서 역매칭한다.
+// ⚠️ **이름이 긴 것부터** 봐야 한다 — "수원시 장안구"·"수원시 권선구"처럼 한 시에 여러 구가
+//    있을 때 짧은 쪽을 먼저 맞추면 엉뚱한 구로 붙는다. 다중 토큰은 전부 포함될 때만 인정.
+// ⚠️ 시도(서울/경기)도 함께 확인한다. 안 그러면 타 시도의 동명 자치구(인천 중구 등)가
+//    서울 중구(11140)로 잘못 붙어 규제지역 판정이 뒤집힌다.
+// 목록에 없는 지역(인천 등)은 null — 호출부는 규제 판정을 비규제로 흘린다.
+export function lawdCdFromAddress(address) {
+  if (!address) return null;
+  const a = String(address).replace(/\s+/g, " ");
+  const byLength = [...ALL_REGIONS].sort((x, y) => y.name.length - x.name.length);
+  for (const r of byLength) {
+    if (!a.includes(r.sido)) continue;
+    if (r.name.split(" ").every((part) => a.includes(part))) return r.code;
+  }
+  return null;
+}
+
 // 지오코딩 결과 주소가 이 지역인지 검증할 토큰.
 // 구가 있으면 가장 구체적인 구(예: "동안구"), 없으면 시 이름(예: "의정부시").
 export function regionToken(code) {

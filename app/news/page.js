@@ -7,6 +7,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { classifyNews, NEWS_CATEGORIES } from "../lib/news";
+import { daysBetweenYmd, kstDate } from "../lib/format";
 import { C, CARD_SHADOW, TRANSITION } from "../lib/palette";
 import Briefing from "../components/Briefing";
 
@@ -19,11 +20,15 @@ const CAT_EMOJI = {
 const isRegionKeyword = (k) => (k || "").endsWith(" 아파트");
 
 // "오늘 · 7월 8일 (화)" 꼴 날짜 그룹 라벨.
+// ⚠️ "오늘/어제" 판정은 **KST 달력 날짜**로 한다(format.kstDate). 예전엔 setHours(0,0,0,0)로
+//    브라우저 로컬 자정을 기준 삼았는데, 그건 이 프로젝트가 네 번 겪은 UTC/KST 버그와 같은
+//    계열이다 — 서버(cron·브리핑)는 이미 kstDate() 기준이라, 해외/UTC 브라우저에서 열면
+//    같은 기사가 뉴스 목록에선 "어제", 브리핑에선 "오늘"로 갈린다.
 function dateLabel(iso) {
-  const d = new Date(iso);
-  const base = d.toLocaleDateString("ko-KR", { month: "long", day: "numeric", weekday: "short" });
-  const today = new Date(); today.setHours(0, 0, 0, 0);
-  const diff = Math.floor((today - new Date(d).setHours(0, 0, 0, 0)) / 86400000);
+  const base = new Date(iso).toLocaleDateString("ko-KR", {
+    month: "long", day: "numeric", weekday: "short",
+  });
+  const diff = daysBetweenYmd(kstDate(Date.parse(iso)), kstDate());
   if (diff === 0) return `오늘 · ${base}`;
   if (diff === 1) return `어제 · ${base}`;
   return base;

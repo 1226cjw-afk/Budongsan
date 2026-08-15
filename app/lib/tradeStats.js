@@ -16,6 +16,16 @@ export function toPyeong(exclusiveM2) {
   return Math.round((exclusiveM2 * SUPPLY_RATIO) / PYEONG);
 }
 
+// 공급면적(㎡) → 평(정수). 청약 공고는 **실제 공급면적**을 주므로 toPyeong의 1.33 근사를
+// 쓰면 안 된다. 2026-08-15 청약홈 getAPTLttotPblancMdl 실측(쌍용 더 플래티넘 서대문):
+//   전용 84.9458㎡ → 실제 공급 110.2769㎡ = 33.4평 → 33평
+//   같은 전용을 toPyeong에 넣으면 84.9458×1.33÷3.3058 = 34.2 → 34평 (1평 어긋남)
+// ⚠️ 화면의 "N평"은 실거래=toPyeong / 청약=pyeongFromSupply로 갈린다. 원천이 주는 값이
+//    다르기 때문이고(실거래는 전용만, 청약은 공급까지), 하나로 합치면 한쪽이 반드시 틀린다.
+export function pyeongFromSupply(supplyM2) {
+  return Math.round(supplyM2 / PYEONG);
+}
+
 // 시세 왜곡 거래 제외. 실거래가 원본에는 두 종류의 "시세가 아닌 거래"가 섞여 있다:
 //  · 해제거래(cdealType="O") — 계약이 취소돼 성사되지 않은 거래. 애초에 시세가 아니다.
 //  · 직거래(dealingGbn="직거래") — 가족간 증여성 거래가 많아 시세에서 크게 벗어난다.

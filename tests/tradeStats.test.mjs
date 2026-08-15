@@ -1,8 +1,23 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  toPyeong, excludeAbnormal, median, groupByPyeong, summarize,
+  toPyeong, pyeongFromSupply, excludeAbnormal, median, groupByPyeong, summarize,
 } from "../app/lib/tradeStats.js";
+
+// ── 청약 공고의 평 환산 ────────────────────────────────────
+// 청약은 실거래와 달리 **공급면적을 직접** 준다 → 1.33 근사(toPyeong)를 쓰면 안 된다.
+// 아래 수치는 2026-08-15 청약홈 getAPTLttotPblancMdl 실측(쌍용 더 플래티넘 서대문).
+test("공급면적은 근사 없이 그대로 나눈다", () => {
+  assert.equal(pyeongFromSupply(110.2769), 33); // 전용 84.9458의 실제 공급면적
+  assert.equal(pyeongFromSupply(78.4853), 24); // 전용 59.9883
+  assert.equal(pyeongFromSupply(110.0644), 33); // 전용 84.9722
+});
+
+// 같은 집인데 두 함수가 1평 어긋나는 것이 이 분리의 이유다. 합치면 한쪽이 반드시 틀린다.
+test("전용 근사와 실제 공급이 갈리는 지점을 기록해 둔다", () => {
+  assert.equal(toPyeong(84.9458), 34); // 전용 × 1.33 근사
+  assert.equal(pyeongFromSupply(110.2769), 33); // 실제 공급
+});
 
 // ── 평 환산 ────────────────────────────────────────────────
 // 화면의 "N평"은 전용이 아니라 **공급** 기준이다. 사람들이 부르는 이름과 맞는지가 전부.
