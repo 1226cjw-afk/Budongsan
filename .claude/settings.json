@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/test-on-edit.js\"",
+            "timeout": 180,
+            "statusMessage": "npm test 실행 중"
+          }
+        ]
+      }
+    ]
+  }
+}

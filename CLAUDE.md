@@ -9,8 +9,10 @@
 ```bash
 npm run dev                      # http://localhost:3000 (카카오에 등록된 도메인이어야 지도가 뜸)
 npx next build                   # 컴파일·타입·prerender — 변경 검증 필수 1
-npm test                         # node:test 66개 — 변경 검증 필수 2 (린트는 이 프로젝트에 없음)
+npm test                         # node:test 83개 — 변경 검증 필수 2 (린트는 이 프로젝트에 없음)
 ```
+⚠️ `app/`·`tests/` 편집 시 PostToolUse 훅이 `npm test`를 자동 실행한다(1.2초, `.claude/hooks/test-on-edit.js`).
+실패하면 실패한 테스트 이름·줄이 차단 사유로 돌아온다. `npx next build`는 느려서 훅에 안 넣었다 — 커밋 전 수동.
 ⚠️ 검증은 build+test **둘 다**. 셋째 축은 Playwright 실측(레이아웃 수치) — 각각 다른 버그를 잡는다.
 
 ## 현황 (2026-08-15)

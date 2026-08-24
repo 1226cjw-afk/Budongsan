@@ -22,3 +22,6 @@ npm-debug.log*
 
 # 에이전트 작업용 스크래치(진행 원장·리뷰 패키지) — 기록은 git 히스토리가 남긴다
 /.superpowers/
+
+# Claude Code 개인 설정 (공유 안 함)
+.claude/settings.local.json
