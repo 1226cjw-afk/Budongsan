@@ -1,32 +1,33 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { REGIONS, ALL_REGIONS, regionName } from "../lib/regions";
-import { calcMaxLoan, isRegulated } from "../lib/loanPolicy";
+import { ALL_REGIONS, regionName } from "../lib/regions";
+import { loanCalcFor, isRegulated } from "../lib/loanPolicy";
 import { C } from "../lib/palette";
-import { daysUntil, leaseLabel, formatManwon, shortDate, formatAgo, monthsToLabel, kstDate } from "../lib/format";
-import { favKey, distMeters, summarize, groupByPyeong, filterTrades } from "../lib/tradeStats";
-import { naverLandUrl } from "../lib/naverLand";
+import { kstDate, formatManwon } from "../lib/format";
+import { favKey, distMeters, summarize, groupByPyeong } from "../lib/tradeStats";
 import { countNew } from "../lib/briefingSeen";
-import TrendChart from "./TrendChart";
+import {
+  AREA_FILTERS, PRICE_FILTERS, MONTHLY_FILTERS, bandFor,
+  HOT_PCT, SORT_OPTIONS, SORT_GAP,
+} from "../lib/mapFilters";
+import { bestFit, buildComplexRows, sortComplexRows } from "../lib/complexRows";
 import HelpModal from "./HelpModal";
 import { MobileTopBar, MobileSheet } from "./MobileShell";
+import ControlPanel from "./map/ControlPanel";
+import ComplexList from "./map/ComplexList";
+import DetailPanel from "./map/DetailPanel";
 import {
-  controlPanel, panelTitle, newsTabLink, detailPanel, selectStyle, pillBtn, pillBtnOn,
-  statusText, refreshBtn, hintLine, hintText, legendRow, legendItem, legendDot,
-  drawer, drawerHead, fieldRow, fieldLabel, fieldInput,
-  favRow, favEditBtn, favDelBtn, favDdayLine, favEditBox, favSaveBtn,
-  sortBar, sortSelect, onlyBuyLabel, listScroll, rowTop, rowName, rowPrice, rowSub, rowBadges,
-  hotBadge, upBadge, downBadge, rebuildBadge, gapOkBadge, gapNoBadge, excessBadge, excessHotBadge,
-  closeBtn, starBtn, sectionLabel, newsLink, naverLandLink,
-  ownedBtn, ownedBtnOn, ownedBox, ownedClearBtn, noticeBox, pyeongCard, pyeongCardOn, loanRow,
-  basisToggle, basisBtn, basisBtnOn, helpBtn, bindingTag, regBadge, nonRegBadge, linkBtn,
-  costToggle, costTable, costRow, monthlyLine, migrateNotice, newsBadge,
-  locateBtn, regionToastBox, regionToastBtn,
+  controlPanel, detailPanel, pillBtn, locateBtn, regionToastBox, regionToastBtn,
 } from "./mapStyles";
 
 // 카카오맵 + 국토부 실거래가. 지도 이동 시 중심 지역을 자동 인식해 그 시군구 데이터를 로드하고,
 // 단지 클릭(또는 지도 빈 곳 클릭→가까운 단지) 시 우측 패널에 평형별 시세·대출 분석을 보여준다.
+//
+// 이 파일에 남긴 것: 지도 SDK·상태·데이터 로딩·마커 렌더. 화면 조각은 components/map/에,
+// 순수 파생(행 만들기·정렬)은 lib/complexRows.js에 있다.
+// ⚠️ 새 기능을 넣을 땐 여기 쌓기 전에 분리 가능한지 먼저 볼 것 — 이 파일은 두 번 비대해졌다
+//    (2026-07-12 리팩토링으로 1263줄 → 2026-08-15에 다시 1791줄).
 
 const VALID_CODES = new Set(ALL_REGIONS.map((r) => r.code));
 const DEFAULT_CODE = "41173"; // 안양시 동안구
@@ -43,47 +44,7 @@ const IDLE_SETTLE_MS = 400;
 const PROGRAMMATIC_MOVE_MS = 1200;
 const VIEW_KEY = "re_map_view"; // 마지막으로 보던 지도 위치(지역·중심·확대) — 재방문 복원용
 
-// 면적 필터. 라벨은 **공급 기준 평형**이 앞(사람이 쓰는 단위) — 경계값은 전용㎡ 그대로다.
-// (60㎡→24평 / 85㎡→34평 / 135㎡→54평, tradeStats.toPyeong 기준)
-const AREA_FILTERS = [
-  { value: "all", label: "전체 면적", min: 0, max: Infinity },
-  { value: "s", label: "~24평 (전용 60㎡)", min: 0, max: 60 },
-  { value: "m", label: "24~34평 (전용 60~85㎡)", min: 60, max: 85 },
-  { value: "l", label: "34~54평 (전용 85~135㎡)", min: 85, max: 135 },
-  { value: "xl", label: "54평~ (전용 135㎡~)", min: 135, max: Infinity },
-];
-
-const PRICE_FILTERS = [
-  { value: "all", label: "전체 가격", min: 0, max: Infinity },
-  { value: "p1", label: "~3억", min: 0, max: 30000 },
-  { value: "p2", label: "3~6억", min: 30000, max: 60000 },
-  { value: "p3", label: "6~9억", min: 60000, max: 90000 },
-  { value: "p4", label: "9~12억", min: 90000, max: 120000 },
-];
-
-// 월 상환액 상한 필터(만원/월). 자금 프로필(연소득)이 있어야 계산되므로 그때만 노출한다.
-// 사람이 감당 여부를 판단하는 실제 단위가 "월 얼마"라 가격 구간보다 직관적이다.
-const MONTHLY_FILTERS = [
-  { value: "all", label: "월상환 무관", max: Infinity },
-  { value: "m100", label: "월 100만 이하", max: 100 },
-  { value: "m150", label: "월 150만 이하", max: 150 },
-  { value: "m200", label: "월 200만 이하", max: 200 },
-  { value: "m300", label: "월 300만 이하", max: 300 },
-];
-
-// 리스트 패널: 배지·정렬 기준.
-const HOT_PCT = 15; // 1년 상승률 이 값 이상이면 🔥 급등 배지(핀에도 표시)
-const EXCESS_HOT_PCT = 10; // 지역 중앙값 대비 초과상승 이 값(%p) 이상이면 선반영 경고 톤
-const REBUILD_AGE = 30; // 준공 후 이 연수 이상이면 🏗 재건축 연한 배지 (실제 추진현황 API는 없음 → 연한 기준)
 const LIST_INFO_TOP = 30; // 세대수 lazy 조회 대상: 정렬 상위 N개 행
-const SORT_OPTIONS = [
-  { v: "yoy", label: "🔥 1년 상승률순" },
-  { v: "count", label: "거래 많은순" },
-  { v: "priceAsc", label: "가격 낮은순" },
-  { v: "priceDesc", label: "가격 높은순" },
-  { v: "old", label: "🏗 준공 오래된순" },
-];
-const SORT_GAP = { v: "gap", label: "✓ 자금 여유순" }; // 내 자금 설정 시에만 노출
 
 // 마지막으로 보던 지도 위치. 새로고침·재방문 시 그 자리에서 이어 보게 한다.
 // ⚠️ localStorage는 클라이언트에만 있으므로 반드시 마운트 이후(지도 초기화 effect)에만 부른다 —
@@ -129,13 +90,12 @@ export default function KakaoMap() {
   const containerRef = useRef(null);
   const mapRef = useRef(null);
   const geocoderRef = useRef(null);
-  // key → {overlay, el}. 매 렌더마다 전부 파괴/재생성하지 않고 재사용한다 —
-  // 필터 한 번 바꿀 때마다 오버레이 수백 개를 다시 만드느라 지도가 멈칫했다.
+
+  // 오버레이는 key → {overlay, el} 로 재사용한다(전량 파괴/재생성 금지 — renderMarkers 참조).
   const overlaysRef = useRef(new Map());
-  const dataRef = useRef(null);
+  const dataRef = useRef(null); // 지도 클릭 핸들러(초기화 때 만든 고정 클로저)가 최신 거래를 참조
   const lawdCdRef = useRef(DEFAULT_CODE); // idle 핸들러가 최신 지역 코드 참조
   const fitRef = useRef(true); // 다음 렌더에서 지도 영역 자동 맞춤 여부
-  const favSetRef = useRef(new Set());
   const favoritesRef = useRef([]); // 타지역 즐겨찾기 마커용 — 좌표 포함 전체 목록
   const suppressIdleRef = useRef(0); // 코드가 지도를 옮긴 시각 — 지역 재판정 억제 창
   const idleTimerRef = useRef(null); // idle 디바운스 타이머
@@ -169,18 +129,18 @@ export default function KakaoMap() {
   const [myLoc, setMyLoc] = useState(null); // 현위치 {lat, lng}
   const [locating, setLocating] = useState(false);
 
-  // 단지 리스트 패널 (네이버식) — tradesData는 dataRef와 같은 내용의 반응형 사본(리스트 파생용).
   const [tradesData, setTradesData] = useState(null);
   const [rank, setRank] = useState(new Map()); // `${umd}|${apt}` → {yoyPct, recentN, pastN}
   const [sortBy, setSortBy] = useState("yoy");
   const [onlyBuyable, setOnlyBuyable] = useState(false); // 구매가능 단지만 (자금 설정 시)
-  // 모바일 하단 시트 슬롯 — null|"settings"|"list"|"detail". 한 번에 하나만 열린다.
-  // (데스크톱은 좌측 패널에 컨트롤+리스트가 항상 보이므로 이 상태를 쓰지 않는다.)
+
   const [sheet, setSheet] = useState(null);
   const [householdMap, setHouseholdMap] = useState(new Map()); // favKey → 세대수|null (lazy)
   const infoInflightRef = useRef(new Set()); // 세대수 조회 중복 방지
 
-  // 화면 폭 추적(모바일 레이아웃 전환). 폰에서 세부패널이 지도를 가리지 않도록.
+  const [favEdit, setFavEdit] = useState(null); // 즐겨찾기 D-day 인라인 편집 {id, leaseEnd, note, noteDate}
+  const [favDdayErr, setFavDdayErr] = useState("");
+
   useEffect(() => {
     const mq = window.matchMedia("(max-width: 640px)");
     const update = () => setIsMobile(mq.matches);
@@ -190,16 +150,13 @@ export default function KakaoMap() {
   }, []);
 
   const regionLabel = useMemo(() => regionName(lawdCd), [lawdCd]);
-  const [favEdit, setFavEdit] = useState(null); // 즐겨찾기 D-day 인라인 편집 {id, leaseEnd, note, noteDate}
-  const [favDdayErr, setFavDdayErr] = useState("");
   const favSet = useMemo(
     () => new Set(favorites.map((f) => favKey(f.lawd_cd, f.umd_nm, f.apt_nm))),
     [favorites]
   );
   useEffect(() => {
-    favSetRef.current = favSet;
     favoritesRef.current = favorites;
-  }, [favSet, favorites]);
+  }, [favorites]);
   useEffect(() => {
     lawdCdRef.current = lawdCd;
   }, [lawdCd]);
@@ -269,6 +226,7 @@ export default function KakaoMap() {
     : 0;
   const assets = (Number(profile.assets) || 0) + ownedNet;
   const regulated = isRegulated(lawdCd);
+  const affordMode = hasProfile && assets > 0;
 
   // 마커·리스트 계산에 실제로 영향을 주는 자금 입력만 추린 키(문자열이라 얕은 비교가 통한다).
   // ⚠️ profile 객체를 그대로 deps에 넣으면 자금 입력창에 **한 글자 칠 때마다** 객체가 새로 만들어져
@@ -278,52 +236,22 @@ export default function KakaoMap() {
     profile.termYears, profile.householdType, profile.isFirstTime,
   ].join("|");
 
-  function loanForPrice(price, m2 = 0) {
-    if (!hasProfile || !price) return null;
-    return calcMaxLoan({
-      price,
-      lawdCd,
-      householdType: profile.householdType,
-      isFirstTime: profile.isFirstTime,
-      annualIncome: incomeNum,
-      existingAnnualDebt: Number(profile.existingDebt) || 0,
-      rate: (Number(profile.rate) || 0) / 100,
-      termYears: Number(profile.termYears) || 40,
-      area: m2,   // 농특세(85㎡ 초과) 판정
-      assets,     // neededLoan·월납 계산 기준
-    });
-  }
+  // 자금 프로필 → 대출 계산기. 브리핑 카드 3종과 **같은 어댑터**(loanCalcFor)를 쓴다 —
+  // 인자를 손으로 조립하던 시절엔 화면마다 한 필드씩 어긋날 여지가 있었다.
+  const loanForPrice = loanCalcFor(profile, assets);
 
   // 평형 카드 한 장(groupByPyeong의 g)에 대한 대출 계산.
-  // ⚠️ **마커/리스트(bestFit)와 세부패널이 반드시 같은 입력을 쓰게** 하려고 한 곳에 모았다 —
+  // ⚠️ **마커/리스트와 세부패널이 반드시 같은 입력을 쓰게** 하려고 한 곳에 모았다 —
   //    기준가 선택(priceBasis)과 area 전달이 여기 한 번만 적힌다.
   //    예전엔 세부패널이 같은 계산을 따로 적으면서 `loanForPrice(gp)`로 **area(g.m2)를
   //    빠뜨렸다**. 그래서 전용 85㎡ 초과 평형에서 농어촌특별세(0.2%, 중과 시 0.6%)가 통째로
   //    빠져 필요자금이 작게 나왔다(2026-08-14 실측: 11억 40평 −220만원 / 12억 54평 −238만원).
-  //    같은 평형인데 리스트 배지는 "부족", 세부 카드는 "여유"가 뜰 수 있었다. 결정적 증거는
-  //    카드 안의 "농어촌특별세 (85㎡ 초과)" 행 — area가 늘 0이라 조건이 영원히 거짓이었고
-  //    한 번도 렌더된 적이 없는 죽은 코드였다.
+  //    같은 평형인데 리스트 배지는 "부족", 세부 카드는 "여유"가 뜰 수 있었다.
   function loanForGroup(g) {
     const gp = priceBasis === "recent" ? g.recentAmount : g.avg;
-    const ln = loanForPrice(gp, g.m2); // ⚠️ g.m2 = 농특세(85㎡ 초과) 판정 기준. 빼지 말 것
+    // ⚠️ area: g.m2 = 농특세(85㎡ 초과) 판정 기준. 빼지 말 것
+    const ln = loanForPrice(gp, { lawdCd, area: g.m2 });
     return { ln, gap: ln ? assets - ln.requiredCash : null };
-  }
-
-  // 한 단지에서 "대출 가능 + 월납 상한 이내"인 평형 중 자금 여유가 최대인 것.
-  // 반환 {gap, monthly} — 조건을 만족하는 평형이 없으면 null.
-  // priceBasis(최근/평균) 기준가 사용. 마커 색칠(여유 ≥ 0 = 초록)과 리스트 여유 배지·정렬이 이 계산을 공유.
-  // ⚠️ gap과 monthly는 반드시 **같은 평형**에서 나와야 한다. 평형을 넘나들며 고르면
-  //    "A평형은 살 수 있고 B평형은 월납이 싸다"는 이유로 못 사는 단지가 통과한다.
-  function bestFit(hits) {
-    const cap = (MONTHLY_FILTERS.find((m) => m.value === monthly) ?? MONTHLY_FILTERS[0]).max;
-    let best = null;
-    for (const g of groupByPyeong(hits)) {
-      const { ln, gap } = loanForGroup(g);
-      if (!ln || ln.maxLoan <= 0) continue;
-      if (ln.monthlyPayment > cap) continue;
-      if (!best || gap > best.gap) best = { gap, monthly: ln.monthlyPayment };
-    }
-    return best;
   }
 
   // 코드가 지도를 옮길 때는 반드시 이걸로 감싼다 — 그 이동이 만든 idle은 지역을 재판정하지 않는다.
@@ -584,15 +512,6 @@ export default function KakaoMap() {
     };
   }, [ready, lawdCd]);
 
-  useEffect(() => {
-    if (!ready || !dataRef.current) return;
-    // 지역 전환 중(새 데이터 로딩 전) stale 렌더 방지 — 옛 지역으로 setBounds가 실행되면
-    // fitRef가 소진돼 새 지역으로 지도가 안 움직이고, idle 핸들러가 지역을 되돌린다.
-    if (dataRef.current.lawdCd !== lawdCd) return;
-    renderMarkers();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [area, price, monthly, favorites, loanKey, priceBasis, rank]);
-
   // 단지 바뀌면 추세를 '가장 거래 많은 평형'으로 초기화. 추세는 평형별만 본다
   // (전체는 평형이 섞여 시세가 들쭉날쭉 → 추세 의미가 흐려짐).
   useEffect(() => {
@@ -717,6 +636,10 @@ export default function KakaoMap() {
     loadFavorites();
   }
 
+  // ⚠️ 여기서 renderMarkers를 직접 부르지 않는다. 예전엔 fetch가 끝난 자리에서 바로 그렸는데,
+  //    이 함수는 **호출된 렌더의 클로저**를 들고 있어 로딩 중에 사용자가 필터를 바꾸면
+  //    바뀌기 전 필터로 마커를 그리고 끝났다(리스트는 최신 필터라 둘이 갈라짐).
+  //    지금은 tradesData 상태만 갱신하고, 마커는 아래 effect가 최신 값으로 그린다.
   async function loadTrades(code, { refresh = false } = {}) {
     setLoading(true);
     setSelected(null);
@@ -731,11 +654,10 @@ export default function KakaoMap() {
         setStatus(`오류: ${data.error}`);
         return;
       }
-      dataRef.current = data;
-      setTradesData(data); // 리스트 패널 파생용 반응형 사본
+      dataRef.current = data; // 지도 클릭 핸들러용(고정 클로저라 ref로만 최신값을 본다)
+      setTradesData(data);
       setLastUpdated(data.fetchedAt ?? null);
       setExcluded(data.excluded ?? null);
-      renderMarkers();
     } catch (e) {
       setStatus(`불러오기 실패: ${e.message}`);
     } finally {
@@ -743,17 +665,39 @@ export default function KakaoMap() {
     }
   }
 
-  function renderMarkers() {
-    const data = dataRef.current;
-    if (!data) return;
+  const areaBand = bandFor(AREA_FILTERS, area);
+  const priceBand = bandFor(PRICE_FILTERS, price);
+  const monthlyCap = bandFor(MONTHLY_FILTERS, monthly).max;
+
+  // 지도 마커와 리스트가 **함께 쓰는** 단지 행. 예전엔 renderMarkers와 listRows가 필터·집계·
+  // 대출 계산을 각자 적어, 단지 수백 곳의 계산이 매 필터 변경마다 두 번 돌고 호출부가 갈라질
+  // 여지가 있었다(2026-08-14 농특세 사고가 그 계열). 이제 파생 경로가 하나뿐이다.
+  const baseRows = useMemo(() => {
+    if (!tradesData) return null;
+    return buildComplexRows({
+      complexes: tradesData.complexes,
+      lawdCd: tradesData.lawdCd,
+      areaBand,
+      priceBand,
+      priceBasis,
+      rankMap: rank,
+      favSet,
+      fitFor: affordMode ? (hits) => bestFit(hits, { loanForGroup, monthlyCap }) : null,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tradesData, area, price, monthly, priceBasis, rank, loanKey, favSet, affordMode]);
+
+  const listRows = useMemo(() => {
+    if (!baseRows) return null;
+    const filtered = affordMode && onlyBuyable ? baseRows.filter((r) => r.buyable) : baseRows;
+    return sortComplexRows(filtered, sortBy);
+  }, [baseRows, affordMode, onlyBuyable, sortBy]);
+
+  function renderMarkers(rows) {
+    const data = tradesData;
     const kakao = window.kakao;
     const map = mapRef.current;
-    const aB = AREA_FILTERS.find((a) => a.value === area) ?? AREA_FILTERS[0];
-    const pB = PRICE_FILTERS.find((p) => p.value === price) ?? PRICE_FILTERS[0];
-    const favs = favSetRef.current;
-
-    // 자금(보유자산)이 설정된 경우에만 구매가능 여부로 마커를 색칠한다.
-    const affordMode = hasProfile && assets > 0;
+    if (!data || !kakao || !map) return;
 
     // 오버레이는 **재사용**한다 — 필터를 한 번 바꿀 때마다 수백 개를 파괴/재생성하면
     // 지도가 눈에 띄게 멈칫한다. 이번 렌더에 살아남은 키를 모아 두고 나머지만 걷어낸다.
@@ -786,46 +730,38 @@ export default function KakaoMap() {
     let shownTrades = 0;
     let buyableCount = 0;
 
-    data.complexes
-      .filter((c) => c.lat != null)
-      .forEach((c) => {
-        const hits = filterTrades(c.trades, aB, pB);
-        const stat = summarize(hits);
-        if (!stat) return;
+    for (const r of rows) {
+      const c = r.c;
+      if (c.lat == null) continue; // 지오코딩 실패 단지 — 리스트엔 남지만 핀은 못 찍는다
 
-        const pos = new kakao.maps.LatLng(c.lat, c.lng);
-        bounds.extend(pos);
-        shownComplexes += 1;
-        shownTrades += stat.count;
+      const pos = new kakao.maps.LatLng(c.lat, c.lng);
+      bounds.extend(pos);
+      shownComplexes += 1;
+      shownTrades += r.count;
 
-        // 구매가능: 어떤 평형이든 보유자산으로 필요자금을 댈 수 있으면(최대 여유 ≥ 0) true.
-        let buyable = null;
-        if (affordMode) {
-          const fit = bestFit(hits);
-          buyable = fit != null && fit.gap >= 0;
-        }
-        if (buyable) buyableCount += 1;
+      // 구매가능: 어떤 평형이든 보유자산으로 필요자금을 댈 수 있으면(최대 여유 ≥ 0) true.
+      // 자금 설정이 없으면 null → 색칠하지 않고 즐겨찾기 금색을 살린다.
+      const buyable = affordMode ? r.buyable : null;
+      if (buyable) buyableCount += 1;
 
-        const isFav = favs.has(favKey(data.lawdCd, c.umdNm, c.aptNm));
-        const yoy = rank.get(`${c.umdNm}|${c.aptNm}`)?.yoyPct;
-        const hot = yoy != null && yoy >= HOT_PCT; // 1년 급등 단지는 핀에도 🔥
-        let cls = "trade-pin";
-        if (buyable === true) cls += " trade-pin--ok";
-        else if (buyable === false) cls += " trade-pin--no";
-        else if (isFav) cls += " trade-pin--fav"; // 색칠모드 아닐 때만 금색
-        upsert(
-          `c:${data.lawdCd}|${c.umdNm}|${c.aptNm}`,
-          c.lat,
-          c.lng,
-          cls,
-          `<b>${isFav ? "★ " : ""}${hot ? "🔥 " : ""}평균 ${formatManwon(stat.avg)}</b><span>${c.aptNm}</span>`,
-          () => setSelected(c)
-        );
-      });
+      const hot = r.yoy != null && r.yoy >= HOT_PCT; // 1년 급등 단지는 핀에도 🔥
+      let cls = "trade-pin";
+      if (buyable === true) cls += " trade-pin--ok";
+      else if (buyable === false) cls += " trade-pin--no";
+      else if (r.isFav) cls += " trade-pin--fav"; // 색칠모드 아닐 때만 금색
+      upsert(
+        `c:${data.lawdCd}|${c.umdNm}|${c.aptNm}`,
+        c.lat,
+        c.lng,
+        cls,
+        `<b>${r.isFav ? "★ " : ""}${hot ? "🔥 " : ""}평균 ${formatManwon(r.avg)}</b><span>${c.aptNm}</span>`,
+        () => setSelected(c)
+      );
+    }
 
     // 타지역 즐겨찾기: 현재 지역 밖의 즐겨찾기도 ★ 핀으로 함께 표시한다.
     // 그 지역 거래는 안 불러왔으므로 가격이 없음 → 지역명만 보여주고, 클릭하면 그 지역으로 이동.
-    // (현재 지역 즐겨찾기는 위 단지 루프에서 이미 금색 가격 핀으로 그림 → 중복 제외.)
+    // (현재 지역 즐겨찾기는 위 루프에서 이미 금색 가격 핀으로 그림 → 중복 제외.)
     favoritesRef.current.forEach((f) => {
       if (f.lat == null || f.lawd_cd === data.lawdCd) return;
       upsert(
@@ -851,11 +787,10 @@ export default function KakaoMap() {
       fitRef.current = false;
     }
 
-    const mB = MONTHLY_FILTERS.find((m) => m.value === monthly) ?? MONTHLY_FILTERS[0];
     const tags = [
-      area === "all" ? null : aB.label,
-      price === "all" ? null : pB.label,
-      monthly === "all" ? null : mB.label,
+      area === "all" ? null : areaBand.label,
+      price === "all" ? null : priceBand.label,
+      monthly === "all" ? null : bandFor(MONTHLY_FILTERS, monthly).label,
     ]
       .filter(Boolean)
       .join(" · ");
@@ -867,50 +802,16 @@ export default function KakaoMap() {
     );
   }
 
-  // 리스트 행 데이터 파생: 필터 적용 → 배지(상승률/재건축연한/자금여유) 계산 → 정렬.
-  // affordMode에서 gap = 평형 중 가장 여유가 큰 값(대출가능 평형 기준), null = 전 평형 대출 불가.
-  const affordMode = hasProfile && assets > 0;
-  const listRows = useMemo(() => {
-    if (!tradesData) return null;
-    const aB = AREA_FILTERS.find((a) => a.value === area) ?? AREA_FILTERS[0];
-    const pB = PRICE_FILTERS.find((p) => p.value === price) ?? PRICE_FILTERS[0];
-    const thisYear = new Date().getFullYear();
-    const rows = [];
-    for (const c of tradesData.complexes) {
-      const hits = filterTrades(c.trades, aB, pB);
-      const stat = summarize(hits);
-      if (!stat) continue;
-      const fit = affordMode ? bestFit(hits) : null; // 마커 색칠과 같은 계산(bestFit) 공유
-      const gap = fit ? fit.gap : null;
-      const key = favKey(tradesData.lawdCd, c.umdNm, c.aptNm);
-      const buildYear = Number(hits[0]?.buildYear) || null;
-      rows.push({
-        c,
-        key,
-        price: priceBasis === "recent" ? stat.recentAmount : stat.avg,
-        count: stat.count,
-        yoy: rank.get(`${c.umdNm}|${c.aptNm}`)?.yoyPct ?? null,
-        buildYear,
-        rebuild: buildYear != null && thisYear - buildYear >= REBUILD_AGE,
-        gap,
-        noLoan: affordMode && gap == null, // 대출 불가(다주택 규제 등) 또는 월납 상한 초과
-        buyable: gap != null && gap >= 0,
-        isFav: favSet.has(key),
-        households: householdMap.get(key) ?? null,
-      });
-    }
-    const filtered = affordMode && onlyBuyable ? rows.filter((r) => r.buyable) : rows;
-    const cmp = {
-      yoy: (a, b) => (b.yoy ?? -Infinity) - (a.yoy ?? -Infinity),
-      count: (a, b) => b.count - a.count,
-      priceAsc: (a, b) => a.price - b.price,
-      priceDesc: (a, b) => b.price - a.price,
-      old: (a, b) => (a.buildYear ?? 9999) - (b.buildYear ?? 9999),
-      gap: (a, b) => (b.gap ?? -Infinity) - (a.gap ?? -Infinity),
-    }[sortBy];
-    return cmp ? filtered.sort(cmp) : filtered;
+  // 마커는 오직 여기서만 그린다(단일 경로). baseRows가 바뀔 때마다 = 데이터·필터·자금·순위가
+  // 바뀔 때마다 최신 값으로 다시 그려진다.
+  // ⚠️ 지역 전환 중 stale 렌더 방지 가드를 지우지 말 것 — 옛 지역 데이터로 setBounds가 실행되면
+  //    fitRef가 소진돼 새 지역으로 지도가 안 움직이고, idle 핸들러가 지역을 되돌린다.
+  useEffect(() => {
+    if (!ready || !baseRows || !tradesData) return;
+    if (tradesData.lawdCd !== lawdCd) return;
+    renderMarkers(baseRows);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tradesData, area, price, monthly, priceBasis, rank, loanKey, sortBy, onlyBuyable, favSet, householdMap]);
+  }, [ready, baseRows, tradesData, lawdCd, favorites]);
 
   // 리스트 상위 N개 행의 세대수 lazy 조회(/api/complex-info POST 일괄 — 서버가 kapt_cache 조회).
   useEffect(() => {
@@ -997,87 +898,10 @@ export default function KakaoMap() {
 
   const sortOptions = affordMode ? [...SORT_OPTIONS, SORT_GAP] : SORT_OPTIONS;
 
-  // 단지 리스트 (정렬 바 + 행 목록) — 데스크톱은 좌측 패널 하단, 모바일은 목록 시트에 공용.
-  const listContent = (
-    <>
-      <div style={sortBar}>
-        <select value={sortBy} onChange={(e) => setSortBy(e.target.value)} style={sortSelect}>
-          {sortOptions.map((o) => (
-            <option key={o.v} value={o.v}>{o.label}</option>
-          ))}
-        </select>
-        {affordMode && (
-          <label style={onlyBuyLabel}>
-            <input
-              type="checkbox"
-              checked={onlyBuyable}
-              onChange={(e) => setOnlyBuyable(e.target.checked)}
-              style={{ margin: 0 }}
-            />
-            구매가능만
-          </label>
-        )}
-        <span style={{ fontSize: 11, color: C.muted, marginLeft: "auto", whiteSpace: "nowrap" }}>
-          {listRows ? `${listRows.length}곳` : ""}
-        </span>
-      </div>
-      <div style={listScroll}>
-        {!listRows ? (
-          <div style={hintText}>불러오는 중…</div>
-        ) : listRows.length === 0 ? (
-          <div style={hintText}>조건에 맞는 단지가 없습니다</div>
-        ) : (
-          listRows.map((r, i) => {
-            const isOn = selected && selected.umdNm === r.c.umdNm && selected.aptNm === r.c.aptNm;
-            return (
-              <div
-                key={r.key}
-                className={`cx-row${isOn ? " cx-row--on" : ""}`}
-                onClick={() => selectComplex(r.c)}
-                style={{ animationDelay: `${Math.min(i, 15) * 20}ms` }}
-              >
-                <div style={rowTop}>
-                  <span style={rowName}>
-                    {r.isFav && <span style={{ color: C.amber }}>★ </span>}
-                    {r.c.aptNm}
-                  </span>
-                  <span style={rowPrice}>{formatManwon(r.price)}</span>
-                </div>
-                <div style={rowSub}>
-                  {r.c.umdNm}
-                  {r.buildYear ? ` · '${String(r.buildYear).slice(2)}년` : ""}
-                  {r.households ? ` · ${r.households.toLocaleString()}세대` : ""}
-                  {` · ${r.count}건`}
-                </div>
-                <div style={rowBadges}>
-                  {r.yoy != null && (
-                    <span style={r.yoy >= HOT_PCT ? hotBadge : r.yoy >= 0 ? upBadge : downBadge}>
-                      {r.yoy >= HOT_PCT ? "🔥 " : ""}1년 {r.yoy >= 0 ? "+" : ""}{r.yoy}%
-                    </span>
-                  )}
-                  {r.rebuild && <span style={rebuildBadge}>🏗 재건축연한</span>}
-                  {r.noLoan ? (
-                    <span style={gapNoBadge}>대출 불가</span>
-                  ) : r.gap != null ? (
-                    r.gap >= 0 ? (
-                      <span style={gapOkBadge}>✓ 여유 {formatManwon(r.gap)}</span>
-                    ) : (
-                      <span style={gapNoBadge}>부족 {formatManwon(-r.gap)}</span>
-                    )
-                  ) : null}
-                </div>
-              </div>
-            );
-          })
-        )}
-      </div>
-    </>
-  );
-
   // 모바일: 상단은 1줄 바(MobileTopBar), 컨트롤·목록·세부는 전부 하단 시트 하나로.
   //   시트 슬롯이 단일 상태(sheet)라 동시에 둘 이상 열릴 수 없다 = 겹침 구조적 불가.
   //   패널 자체는 시트 안의 콘텐츠가 되므로 위치·배경·그림자를 벗긴다.
-  // 데스크톱: 좌측 패널이 컨트롤+단지 리스트(네이버식)로 전체 높이. 변경 없음.
+  // 데스크톱: 좌측 패널이 컨트롤+단지 리스트(네이버식)로 전체 높이.
   const bare = {
     position: "static", width: "auto", padding: 0,
     background: "none", boxShadow: "none", border: "none",
@@ -1096,564 +920,92 @@ export default function KakaoMap() {
   const hasFilter = area !== "all" || price !== "all" || monthly !== "all";
 
   const controlPanelContent = (
-    <>
-      {!isMobile && (
-        <div style={{ ...panelTitle, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <span>🏠 실거래 · 대출 비교</span>
-          <a href="/news" style={newsTabLink}>
-            📰 뉴스{newsNew > 0 && <span style={newsBadge}>{newsNew}</span>}
-          </a>
-        </div>
-      )}
+    <ControlPanel
+      isMobile={isMobile}
+      newsNew={newsNew}
+      loading={loading}
+      status={status}
+      lastUpdated={lastUpdated}
+      lawdCd={lawdCd}
+      onSelectRegion={selectRegion}
+      onRefresh={() => loadTrades(lawdCd, { refresh: true })}
+      area={area} setArea={setArea}
+      price={price} setPrice={setPrice}
+      monthly={monthly} setMonthly={setMonthly}
+      affordMode={affordMode}
+      hasProfile={hasProfile}
+      assets={assets}
+      priceBasis={priceBasis}
+      favorites={favorites}
+      showFavs={showFavs} setShowFavs={setShowFavs}
+      showProfile={showProfile} setShowProfile={setShowProfile}
+      onOpenList={() => { setSheet("list"); setShowFavs(false); setShowProfile(false); }}
+      showCostNotice={showCostNotice}
+      onDismissCostNotice={dismissCostNotice}
+      profile={profile}
+      updateProfile={updateProfile}
+      owned={owned}
+      ownedSalePrice={ownedSalePrice}
+      ownedNet={ownedNet}
+      favProps={{
+        onGoto: gotoFavorite,
+        onRemove: removeFavorite,
+        favEdit, setFavEdit,
+        favDdayErr, setFavDdayErr,
+        onSave: saveFavDday,
+      }}
+    />
+  );
 
-        <select
-          value={lawdCd}
-          onChange={(e) => selectRegion(e.target.value)}
-          disabled={loading}
-          style={selectStyle}
-        >
-          {REGIONS.map((g) => (
-            <optgroup key={g.sido} label={g.sido}>
-              {g.items.map((it) => (
-                <option key={it.code} value={it.code}>{it.name}</option>
-              ))}
-            </optgroup>
-          ))}
-        </select>
-
-        <div style={{ display: "flex", gap: 8 }}>
-          <select value={area} onChange={(e) => setArea(e.target.value)} disabled={loading} style={{ ...selectStyle, flex: 1 }}>
-            {AREA_FILTERS.map((a) => (
-              <option key={a.value} value={a.value}>{a.label}</option>
-            ))}
-          </select>
-          <select value={price} onChange={(e) => setPrice(e.target.value)} disabled={loading} style={{ ...selectStyle, flex: 1 }}>
-            {PRICE_FILTERS.map((p) => (
-              <option key={p.value} value={p.value}>{p.label}</option>
-            ))}
-          </select>
-        </div>
-
-        {affordMode && (
-          <select
-            value={monthly}
-            onChange={(e) => setMonthly(e.target.value)}
-            disabled={loading}
-            style={selectStyle}
-            title="월 원리금 상환액 상한으로 거르기"
-          >
-            {MONTHLY_FILTERS.map((m) => (
-              <option key={m.value} value={m.value}>{m.label}</option>
-            ))}
-          </select>
-        )}
-
-        <div style={{ display: "flex", gap: 8 }}>
-          <button
-            onClick={() => { setShowFavs((v) => !v); setShowProfile(false); }}
-            style={{ ...pillBtn, ...(showFavs ? pillBtnOn : null) }}
-          >
-            ★ 즐겨찾기 {favorites.length}
-          </button>
-          <button
-            onClick={() => { setShowProfile((v) => !v); setShowFavs(false); }}
-            style={{ ...pillBtn, ...(showProfile ? pillBtnOn : null) }}
-          >
-            💰 내 자금{hasProfile ? " ✓" : ""}
-          </button>
-          {isMobile && (
-            <button
-              onClick={() => { setSheet("list"); setShowFavs(false); setShowProfile(false); }}
-              style={pillBtn}
-            >
-              📋 목록
-            </button>
-          )}
-        </div>
-
-        <div style={statusText}>{status}</div>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <span style={hintLine}>
-            {lastUpdated ? `🕒 갱신 ${formatAgo(lastUpdated)}` : "지도 이동 → 지역 전환"}
-          </span>
-          <button
-            onClick={() => loadTrades(lawdCd, { refresh: true })}
-            disabled={loading}
-            style={refreshBtn}
-            title="실거래가 새로 갱신"
-          >
-            🔄 갱신
-          </button>
-        </div>
-        {showCostNotice && (
-          <div style={migrateNotice}>
-            필요자금에 <b>취득세·중개보수·등기비</b>가 반영되도록 개선했습니다.
-            이전보다 필요자금이 커 보이는 게 정상이에요.
-            <button onClick={dismissCostNotice} style={{ ...linkBtn, marginLeft: 6, fontSize: 11 }}>
-              확인
-            </button>
-          </div>
-        )}
-        {hasProfile && assets > 0 && (
-          <div style={legendRow}>
-            <span style={legendItem}><span style={{ ...legendDot, background: C.green }} />구매가능</span>
-            <span style={legendItem}><span style={{ ...legendDot, background: C.red }} />자금부족</span>
-            <span style={{ color: C.muted }}>· {priceBasis === "recent" ? "최근가" : "평균가"} 기준</span>
-          </div>
-        )}
-        {!isMobile && (
-          <div style={hintLine}>지도 이동 → 지역 전환 · 빈 곳 클릭 → 가까운 단지</div>
-        )}
-
-        {showProfile && (
-          <div style={drawer}>
-            <div style={drawerHead}>내 자금 설정 <span style={{ color: C.muted, fontWeight: 400 }}>(단위: 만원)</span></div>
-            <label style={fieldRow}>
-              <span style={fieldLabel}>보유자산</span>
-              <input type="number" value={profile.assets} onChange={(e) => updateProfile({ assets: e.target.value })} placeholder="예: 50000" style={fieldInput} />
-            </label>
-            <div style={ownedBox}>
-              <div style={{ fontSize: 12, fontWeight: 700, color: C.text }}>🔁 갈아타기 — 보유 주택 매도</div>
-              {owned ? (
-                <>
-                  <div style={{ fontSize: 12, color: C.sub, margin: "4px 0 2px" }}>
-                    🏠 {regionName(owned.lawdCd)} {owned.umdNm} {owned.aptNm} {owned.area}㎡
-                    <button onClick={() => updateProfile({ owned: null })} style={ownedClearBtn}>해제</button>
-                  </div>
-                  <label style={fieldRow}>
-                    <span style={fieldLabel}>대출 잔액</span>
-                    <input type="number" value={profile.ownedLoanBalance} onChange={(e) => updateProfile({ ownedLoanBalance: e.target.value })} placeholder="0" style={fieldInput} />
-                  </label>
-                  <label style={fieldRow}>
-                    <span style={fieldLabel}>보증금 반환</span>
-                    <input type="number" value={profile.ownedDeposit} onChange={(e) => updateProfile({ ownedDeposit: e.target.value })} placeholder="0" style={fieldInput} />
-                  </label>
-                  <label style={fieldRow}>
-                    <span style={fieldLabel}>취득일(잔금)</span>
-                    <input type="date" value={profile.ownedAcquiredYmd} onChange={(e) => updateProfile({ ownedAcquiredYmd: e.target.value })} style={fieldInput} />
-                  </label>
-                  {profile.ownedAcquiredYmd && (() => {
-                    // 1주택 양도세 비과세: 보유 2년 + 12억 이하(소득세법 §89①3, 고가 기준 12억은 2021-12-08~).
-                    // 양도일 = 잔금일(둘 중 빠른 등기일). 취득 당시 조정대상지역이면 거주 2년 요건 추가.
-                    // 단기양도 중과: 보유 1년 미만 70% / 1~2년 60% (2021-06-01 이후 양도분, 확인일 2026-07-05).
-                    const free = new Date(profile.ownedAcquiredYmd);
-                    free.setFullYear(free.getFullYear() + 2);
-                    const dd = Math.ceil((free - Date.now()) / 86400000);
-                    const freeYmd = free.toISOString().slice(0, 10);
-                    return (
-                      <div style={{ fontSize: 11, marginTop: 3, lineHeight: 1.5, fontWeight: 600, color: dd > 0 ? "#b45309" : C.green }}>
-                        {dd > 0
-                          ? `⏳ 비과세(보유 2년) ${freeYmd}부터 · D-${dd} — 그 전 양도(잔금)는 단기중과 60~70%`
-                          : "✓ 보유 2년 충족 — 12억 이하 비과세 가능(잔금일 기준 · 취득 시 조정지역이었다면 거주요건 별도, 세무사 확인)"}
-                      </div>
-                    );
-                  })()}
-                  <div style={{ fontSize: 11, color: C.sub, marginTop: 4, lineHeight: 1.5 }}>
-                    매도가 <b style={{ color: C.text }}>{formatManwon(ownedSalePrice)}</b>
-                    ({priceBasis === "recent" ? "최근가" : "평균가"} · {owned.capturedYmd} 시세)
-                    {" → "}실수령 <b style={{ color: C.text }}>{formatManwon(ownedNet)}</b>
-                    {" · "}가용 자기자금 <b style={{ color: C.blue }}>{formatManwon(assets)}</b>
-                  </div>
-                </>
-              ) : (
-                <div style={{ ...hintLine, marginTop: 2 }}>
-                  단지 세부패널의 평형 카드에서 <b>보유 지정</b>을 누르면 예상 매도대금이 자기자금에 합산됩니다
-                </div>
-              )}
-            </div>
-            <label style={fieldRow}>
-              <span style={fieldLabel}>연소득</span>
-              <input type="number" value={profile.income} onChange={(e) => updateProfile({ income: e.target.value })} placeholder="예: 7000" style={fieldInput} />
-            </label>
-            <label style={fieldRow}>
-              <span style={fieldLabel}>기존대출 연상환</span>
-              <input type="number" value={profile.existingDebt} onChange={(e) => updateProfile({ existingDebt: e.target.value })} placeholder="0" style={fieldInput} />
-            </label>
-            <label style={fieldRow}>
-              <span style={fieldLabel}>월 저축액</span>
-              <input
-                type="number"
-                value={profile.monthlySaving}
-                onChange={(e) => updateProfile({ monthlySaving: e.target.value })}
-                placeholder="선택"
-                style={fieldInput}
-                title="입력하면 자금이 부족한 평형에 '얼마나 더 모으면 되는지'가 표시됩니다"
-              />
-            </label>
-            <label style={fieldRow}>
-              <span style={fieldLabel}>가구유형</span>
-              <select value={profile.householdType} onChange={(e) => updateProfile({ householdType: e.target.value })} style={fieldInput}>
-                <option value="무주택">무주택</option>
-                <option value="1주택">1주택</option>
-                <option value="다주택">다주택</option>
-              </select>
-            </label>
-            <div style={{ display: "flex", gap: 8 }}>
-              <label style={{ ...fieldRow, flex: 1 }}>
-                <span style={fieldLabel}>금리%</span>
-                <input type="number" step="0.1" value={profile.rate} onChange={(e) => updateProfile({ rate: e.target.value })} style={{ ...fieldInput, width: 64 }} />
-              </label>
-              <label style={{ ...fieldRow, flex: 1 }}>
-                <span style={fieldLabel}>만기년</span>
-                <input type="number" value={profile.termYears} onChange={(e) => updateProfile({ termYears: e.target.value })} style={{ ...fieldInput, width: 64 }} />
-              </label>
-            </div>
-            <label style={{ ...fieldRow, cursor: "pointer" }}>
-              <span style={fieldLabel}>생애최초 구입</span>
-              <input type="checkbox" checked={profile.isFirstTime} onChange={(e) => updateProfile({ isFirstTime: e.target.checked })} />
-            </label>
-            <div style={hintLine}>단지를 클릭하면 평형별 대출 가능액이 계산됩니다</div>
-          </div>
-        )}
-
-        {showFavs && (
-          <div style={{ ...drawer, maxHeight: 280, overflowY: "auto" }}>
-            {favorites.length === 0 ? (
-              <div style={hintText}>즐겨찾기가 없습니다</div>
-            ) : (
-              favorites.map((f) => (
-                <div key={f.id} style={favRow}>
-                  <div onClick={() => gotoFavorite(f)} style={{ cursor: "pointer", display: "flex", alignItems: "baseline" }}>
-                    <span style={{ flexGrow: 1, minWidth: 0 }}>
-                      <span style={{ color: C.amber }}>★</span> {f.apt_nm}
-                      <span style={{ color: C.muted }}> · {regionName(f.lawd_cd)} {f.umd_nm}</span>
-                    </span>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setFavDdayErr("");
-                        setFavEdit(
-                          favEdit?.id === f.id
-                            ? null
-                            : { id: f.id, leaseEnd: f.lease_end || "", note: f.note || "", noteDate: f.note_date || "" }
-                        );
-                      }}
-                      style={favEditBtn}
-                      title="임대차 만기·이벤트 메모 D-day 입력"
-                    >
-                      ✎
-                    </button>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation(); // 행 클릭(gotoFavorite)으로 새지 않게
-                        removeFavorite(f);
-                      }}
-                      style={favDelBtn}
-                      title="즐겨찾기에서 삭제"
-                    >
-                      🗑
-                    </button>
-                  </div>
-                  {favEdit?.id !== f.id && (f.lease_end || f.note) && (
-                    <div style={favDdayLine}>
-                      {f.lease_end && <span>🔑 {leaseLabel(f.lease_end)}</span>}
-                      {f.note && (
-                        <span>
-                          📌 {f.note}
-                          {f.note_date ? ` · ${daysUntil(f.note_date) >= 0 ? "D-" + daysUntil(f.note_date) : daysUntil(f.note_date) * -1 + "일 지남"}` : ""}
-                        </span>
-                      )}
-                    </div>
-                  )}
-                  {favEdit?.id === f.id && (
-                    <div style={favEditBox}>
-                      <label style={fieldRow}>
-                        <span style={fieldLabel}>임대차 만기</span>
-                        <input type="date" value={favEdit.leaseEnd} onChange={(e) => setFavEdit({ ...favEdit, leaseEnd: e.target.value })} style={fieldInput} />
-                      </label>
-                      <label style={fieldRow}>
-                        <span style={fieldLabel}>이벤트 메모</span>
-                        <input type="text" value={favEdit.note} onChange={(e) => setFavEdit({ ...favEdit, note: e.target.value })} placeholder="예: 재건축 결정" style={fieldInput} />
-                      </label>
-                      <label style={fieldRow}>
-                        <span style={fieldLabel}>이벤트 날짜</span>
-                        <input type="date" value={favEdit.noteDate} onChange={(e) => setFavEdit({ ...favEdit, noteDate: e.target.value })} style={fieldInput} />
-                      </label>
-                      <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 4 }}>
-                        <button onClick={saveFavDday} style={favSaveBtn}>저장</button>
-                        {favDdayErr && <span style={{ fontSize: 11, color: C.red }}>{favDdayErr}</span>}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              ))
-            )}
-          </div>
-        )}
-
-    </>
+  const listContent = (
+    <ComplexList
+      rows={listRows}
+      selected={selected}
+      onSelect={selectComplex}
+      sortBy={sortBy} setSortBy={setSortBy}
+      sortOptions={sortOptions}
+      affordMode={affordMode}
+      onlyBuyable={onlyBuyable} setOnlyBuyable={setOnlyBuyable}
+      householdMap={householdMap}
+    />
   );
 
   // ⚠️ `selected && detail &&` 가드 필수 — JSX는 변수로 만드는 순간 children 표현식이
-  // 평가되므로, 가드 없이 두면 selected가 null일 때 `selected.aptNm`이 터진다
-  // (예전엔 렌더 안 `{selected && detail && (...)}`에 감싸여 있어 문제가 없었다).
+  // 평가되므로, 가드 없이 두면 selected가 null일 때 `selected.aptNm`이 터진다.
+  // 빌드의 prerender 단계가 이걸 잡아준다.
   const detailContent = selected && detail && (
-    <>
-      {/* 모바일 시트에서는 백드롭 탭·그립으로 닫는다. closeBtn은 absolute라 시트에서 좌표가 어긋남. */}
-      {!isMobile && (
-        <button onClick={() => setSelected(null)} style={closeBtn} aria-label="닫기">×</button>
-      )}
-          <div style={{ display: "flex", alignItems: "flex-start", gap: 8, paddingRight: 24 }}>
-            <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 17, fontWeight: 700, color: C.text, lineHeight: 1.25 }}>{selected.aptNm}</div>
-              {detail.overall && (
-                <div style={{ display: "flex", alignItems: "baseline", gap: 7, marginTop: 5, flexWrap: "wrap" }}>
-                  <span style={{ fontSize: 22, fontWeight: 800, color: C.text, letterSpacing: -0.3 }}>
-                    {formatManwon(detail.overall.recentAmount)}
-                  </span>
-                  <span style={{ fontSize: 11, color: C.muted }}>
-                    최근 실거래({shortDate(detail.overall.recentDate)}) · 평균 {formatManwon(detail.overall.avg)}
-                  </span>
-                </div>
-              )}
-              {(() => {
-                const yoy = rank.get(`${selected.umdNm}|${selected.aptNm}`)?.yoyPct;
-                const rebuild =
-                  detail.buildYear && new Date().getFullYear() - Number(detail.buildYear) >= REBUILD_AGE;
-                if (yoy == null && !rebuild) return null;
-                return (
-                  <div style={{ display: "flex", gap: 5, marginTop: 6, flexWrap: "wrap" }}>
-                    {yoy != null && (
-                      <span style={yoy >= HOT_PCT ? hotBadge : yoy >= 0 ? upBadge : downBadge}>
-                        {yoy >= HOT_PCT ? "🔥 " : ""}1년 {yoy >= 0 ? "+" : ""}{yoy}%
-                      </span>
-                    )}
-                    {yoy != null && rankMedian != null && (() => {
-                      const ex = Math.round(yoy - rankMedian);
-                      return (
-                        <span
-                          style={ex >= EXCESS_HOT_PCT ? excessHotBadge : excessBadge}
-                          title={`단지 1년 상승률 − 지역 중앙값(${rankMedian >= 0 ? "+" : ""}${rankMedian}%) = 지역 대비 초과상승. 크게 양수면 재건축 등 기대가 이미 가격에 선반영된 정도가 큼(되돌림 주의), 0 근처면 지역 장세 동행.`}
-                        >
-                          {ex >= EXCESS_HOT_PCT ? "⚡ " : ""}지역 대비 {ex >= 0 ? "+" : ""}{ex}%p
-                        </span>
-                      );
-                    })()}
-                    {rebuild && <span style={rebuildBadge}>🏗 재건축연한</span>}
-                  </div>
-                );
-              })()}
-              <div style={{ fontSize: 12, color: C.sub, marginTop: 5 }}>
-                {regionLabel} {selected.umdNm}
-                {detail.buildYear ? ` · ${detail.buildYear}년 준공` : ""}
-                {info.data?.households ? ` · ${info.data.households.toLocaleString()}세대` : ""}
-                {info.data?.dongCnt ? ` · ${info.data.dongCnt}개동` : ""}
-                {detail.overall ? ` · 최근 ${MONTHS}개월 ${detail.overall.count}건` : ""}
-              </div>
-              <a
-                href={`https://search.naver.com/search.naver?query=${encodeURIComponent(`${regionLabel} ${selected.aptNm}`)}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                style={newsLink}
-              >
-                🔎 네이버 검색
-              </a>
-            </div>
-            <button onClick={toggleFavorite} style={starBtn} title="즐겨찾기">
-              {isSelectedFav ? "★" : "☆"}
-            </button>
-          </div>
-
-          {/* 평형별 시세 · 대출 */}
-          <div style={{ ...sectionLabel, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-            <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              평형별 시세·대출
-              <span style={regulated ? regBadge : nonRegBadge}>{regulated ? "규제지역" : "비규제"}</span>
-            </span>
-            <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <span style={basisToggle}>
-                {[["recent", "최근"], ["avg", "평균"]].map(([v, l]) => (
-                  <button key={v} onClick={() => setPriceBasis(v)} style={{ ...basisBtn, ...(priceBasis === v ? basisBtnOn : null) }}>
-                    {l}
-                  </button>
-                ))}
-              </span>
-              <button onClick={() => setShowHelp(true)} style={helpBtn} title="LTV·DSR 계산 설명">?</button>
-            </span>
-          </div>
-
-          {!hasProfile && (
-            <div style={noticeBox}>
-              <button onClick={() => { setShowProfile(true); setShowFavs(false); }} style={linkBtn}>💰 내 자금 설정</button>
-              {" "}하면 평형별 대출 가능액이 함께 표시됩니다.
-            </div>
-          )}
-
-          <div style={hintLine}>
-            평형을 누르면 시세 추세 그래프가 펼쳐져요
-            {excluded && (excluded.cancelled > 0 || excluded.direct > 0) && (
-              <>
-                {" · "}
-                <span title="계약 해제된 거래와 가족간 증여성 거래가 많은 직거래는 시세에서 뺐습니다">
-                  이 지역 해제 {excluded.cancelled}건·직거래 {excluded.direct}건 제외됨
-                </span>
-              </>
-            )}
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 8 }}>
-            {detail.groups.map((g) => {
-              const { ln, gap } = loanForGroup(g); // 마커·리스트와 같은 계산(농특세 포함)
-              const isSel = trendArea === g.m2;
-              return (
-                <div
-                  key={g.m2}
-                  onClick={() => setTrendArea(g.m2)}
-                  style={{ ...pyeongCard, ...(isSel ? pyeongCardOn : null), cursor: "pointer" }}
-                >
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-                    <span style={{ fontWeight: 700, fontSize: 13, color: C.text }}>
-                      {g.m2}㎡ <span style={{ color: C.sub, fontWeight: 500 }}>· {g.pyeong}평</span>
-                    </span>
-                    <span style={{ display: "flex", gap: 8, alignItems: "baseline" }}>
-                      <button
-                        onClick={(e) => { e.stopPropagation(); toggleOwned(g); }}
-                        style={{ ...ownedBtn, ...(isOwnedPyeong(g) ? ownedBtnOn : null) }}
-                        title="갈아타기: 이 평형을 보유 주택으로 지정하면 예상 매도대금이 자기자금에 합산됩니다"
-                      >
-                        {isOwnedPyeong(g) ? "✓ 보유중" : "보유 지정"}
-                      </button>
-                      <a
-                        href={naverLandUrl(selected.umdNm, selected.aptNm, selected.naverName)}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        style={naverLandLink}
-                        title="네이버 부동산에서 이 단지 매물 보기"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        {g.count}건 · 🏠 매물
-                      </a>
-                    </span>
-                  </div>
-                  <div style={{ fontSize: 12, color: C.sub, marginTop: 3 }}>
-                    평균 <b style={{ color: C.text }}>{formatManwon(g.avg)}</b>
-                    {" · "}최근 <b style={{ color: C.blue }}>{formatManwon(g.recentAmount)}</b>
-                  </div>
-
-                  {isSel && (
-                    <div style={{ marginTop: 8, paddingTop: 8, borderTop: `1px dashed ${C.border}` }} onClick={(e) => e.stopPropagation()}>
-                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                        <span style={{ fontSize: 11, fontWeight: 700, color: C.sub }}>
-                          시세 추세 <span style={{ color: C.muted, fontWeight: 400 }}>· {trendMonths === 36 ? "최근 3년" : "최근 1년"}</span>
-                        </span>
-                        <span style={{ display: "flex", gap: 4 }}>
-                          {[{ v: 12, label: "1년" }, { v: 36, label: "3년" }].map((o) => (
-                            <button key={o.v} onClick={() => setTrendMonths(o.v)} style={{ ...basisBtn, ...(trendMonths === o.v ? basisBtnOn : null) }}>
-                              {o.label}
-                            </button>
-                          ))}
-                        </span>
-                      </div>
-                      {trend.loading ? (
-                        <div style={hintText}>불러오는 중…</div>
-                      ) : trend.series ? (
-                        <TrendChart series={trend.series} areaLabel={`${g.m2}㎡`} />
-                      ) : null}
-                    </div>
-                  )}
-
-                  {ln && (
-                    ln.maxLoan <= 0 ? (
-                      <div style={{ ...loanRow, color: C.red, fontWeight: 600, fontSize: 12 }}>
-                        {regulated && profile.householdType === "다주택"
-                          ? "규제 다주택 — 대출 불가"
-                          : "대출 불가 (DSR 한도 초과)"}
-                      </div>
-                    ) : (
-                      <div style={loanRow}>
-                        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: C.sub }}>
-                          <span>
-                            대출 <b style={{ color: C.text }}>{formatManwon(ln.maxLoan)}</b>
-                            <span style={bindingTag}>{ln.binding}</span>
-                          </span>
-                          <span>필요자금 <b style={{ color: C.text }}>{formatManwon(ln.requiredCash)}</b></span>
-                        </div>
-
-                        {/* 월납은 실제 금리 기준 현금흐름. DSR은 스트레스 금리 기준 규제 수치라 다르다. */}
-                        <div style={monthlyLine}>
-                          월 <b style={{ color: C.text }}>{ln.monthlyPayment.toLocaleString()}만원</b>
-                          {ln.dsrRatio != null && (
-                            <span style={{ color: C.muted }}>
-                              {" · DSR "}{Math.round(ln.dsrRatio * 100)}%
-                            </span>
-                          )}
-                        </div>
-
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation(); // 카드 클릭(추세 선택기)과 충돌 방지
-                            setShowCost((v) => (v === g.m2 ? null : g.m2));
-                          }}
-                          style={costToggle}
-                        >
-                          {showCost === g.m2 ? "▾" : "▸"} 부대비용 {formatManwon(ln.acquisitionCost.total)} 내역
-                        </button>
-                        {showCost === g.m2 && (
-                          <div style={costTable} onClick={(e) => e.stopPropagation()}>
-                            <div style={costRow}>
-                              <span>취득세 ({(ln.acquisitionCost.taxRate * 100).toFixed(2)}%)</span>
-                              <span>{formatManwon(ln.acquisitionCost.acquisitionTax)}</span>
-                            </div>
-                            <div style={costRow}>
-                              <span>지방교육세</span>
-                              <span>{formatManwon(ln.acquisitionCost.localEduTax)}</span>
-                            </div>
-                            {ln.acquisitionCost.ruralTax > 0 && (
-                              <div style={costRow}>
-                                <span>농어촌특별세 (85㎡ 초과)</span>
-                                <span>{formatManwon(ln.acquisitionCost.ruralTax)}</span>
-                              </div>
-                            )}
-                            <div style={costRow}>
-                              <span>중개보수 (VAT 포함)</span>
-                              <span>{formatManwon(ln.acquisitionCost.brokerFee)}</span>
-                            </div>
-                            <div style={costRow}>
-                              <span>등기·채권 등 (근사)</span>
-                              <span>{formatManwon(ln.acquisitionCost.registryEtc)}</span>
-                            </div>
-                            {profile.householdType === "다주택" && (
-                              <div style={{ marginTop: 4, color: C.muted, lineHeight: 1.5 }}>
-                                2주택 취득 기준입니다. 3주택 이상이면 취득세율이 12%로 더 높습니다.
-                              </div>
-                            )}
-                          </div>
-                        )}
-
-                        {assets > 0 && (
-                          <div style={{ fontSize: 12, fontWeight: 700, marginTop: 3, color: gap >= 0 ? C.green : C.red }}>
-                            {gap >= 0 ? (
-                              `✓ 매수 가능 · 여유 ${formatManwon(gap)}`
-                            ) : (
-                              <>
-                                {`✗ 자금 부족 ${formatManwon(-gap)}`}
-                                {(() => {
-                                  // 현재 시세 기준 단순 나눗셈. 집값 상승·금리 변동은 반영하지 않는다
-                                  // — 가정을 늘리면 숫자만 그럴듯해지고 신뢰도는 떨어진다.
-                                  const save = Number(profile.monthlySaving) || 0;
-                                  if (save <= 0) return null;
-                                  const label = monthsToLabel(-gap / save);
-                                  if (!label) return null;
-                                  return (
-                                    <span
-                                      style={{ fontWeight: 500, color: C.sub }}
-                                      title="현재 시세 기준 단순 계산입니다. 집값 변동은 반영하지 않습니다."
-                                    >
-                                      {` · 월 ${save.toLocaleString()}만 저축 시 ${label}`}
-                                    </span>
-                                  );
-                                })()}
-                              </>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    )
-                  )}
-                </div>
-              );
-            })}
-      </div>
-    </>
+    <DetailPanel
+      selected={selected}
+      detail={detail}
+      info={info}
+      isMobile={isMobile}
+      onClose={() => setSelected(null)}
+      regionLabel={regionLabel}
+      months={MONTHS}
+      yoy={rank.get(`${selected.umdNm}|${selected.aptNm}`)?.yoyPct}
+      rankMedian={rankMedian}
+      isFav={isSelectedFav}
+      onToggleFavorite={toggleFavorite}
+      regulated={regulated}
+      priceBasis={priceBasis}
+      setPriceBasis={setPriceBasis}
+      onShowHelp={() => setShowHelp(true)}
+      hasProfile={hasProfile}
+      onOpenProfile={() => { setShowProfile(true); setShowFavs(false); }}
+      excluded={excluded}
+      loanForGroup={loanForGroup}
+      trendArea={trendArea}
+      setTrendArea={setTrendArea}
+      trend={trend}
+      trendMonths={trendMonths}
+      setTrendMonths={setTrendMonths}
+      isOwnedPyeong={isOwnedPyeong}
+      onToggleOwned={toggleOwned}
+      showCost={showCost}
+      setShowCost={setShowCost}
+      profile={profile}
+      assets={assets}
+    />
   );
 
   return (
@@ -1661,7 +1013,9 @@ export default function KakaoMap() {
       <div ref={containerRef} style={{ width: "100%", height: "100%" }} />
 
       {/* 지도를 보면서 눌러야 하는 컨트롤 — 패널/시트 밖에 직접 둔다.
-          모바일은 시트가 열려 있으면 가려지므로 숨긴다. */}
+          모바일은 시트가 열려 있으면 가려지므로 숨긴다.
+          ⚠️ 데스크톱에서 right 정렬 금지 — 세부패널(right:14, width:320, 전체높이)이 덮어
+             클릭이 안 된다. 좌우 패널 사이 빈 지도 영역(left:368)에 둔다. */}
       {!(isMobile && sheet) && (
         <button
           onClick={() => locateMe()}

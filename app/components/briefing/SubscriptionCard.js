@@ -11,7 +11,7 @@
 
 import { useMemo } from "react";
 import { daysUntil, formatManwon } from "../../lib/format";
-import { calcMaxLoan } from "../../lib/loanPolicy";
+import { loanCalcFor } from "../../lib/loanPolicy";
 import { pyeongFromSupply } from "../../lib/tradeStats";
 import { C } from "../../lib/palette";
 import {
@@ -34,26 +34,17 @@ function baseName(name) {
     .trim();
 }
 
-// 평형 한 장의 자금 판정. 지도·새 거래 피드와 **같은 calcMaxLoan**을 쓴다 — 두 화면에서
+// 평형 한 장의 자금 판정. 지도·새 거래 피드와 **같은 어댑터**(loanCalcFor)를 쓴다 — 두 화면에서
 // 같은 금액이 다르게 나오면 도구를 믿을 수 없게 된다.
 // ⚠️ gap과 평형은 **같은 모델에서** 뽑아야 한다. 여러 평형을 넘나들며 "제일 싼 분양가"와
 //    "제일 큰 여유"를 따로 고르면, 실제로는 살 수 없는 조합이 여유로 표시된다
 //    (지도 bestFit()이 같은 이유로 {gap, monthly}를 한 평형에서 뽑는다).
 function bestModelFit(models, lawdCd, profile, assets) {
+  const loanFor = loanCalcFor(profile, assets);
   let best = null;
   for (const m of models) {
-    const ln = calcMaxLoan({
-      price: m.price,
-      lawdCd,
-      householdType: profile.householdType,
-      isFirstTime: profile.isFirstTime,
-      annualIncome: Number(profile.income),
-      existingAnnualDebt: Number(profile.existingDebt) || 0,
-      rate: (Number(profile.rate) || 0) / 100,
-      termYears: Number(profile.termYears) || 40,
-      area: m.exclusiveAr, // 전용 85㎡ 초과면 농특세가 붙는다 — 빠뜨리면 금액이 어긋난다
-      assets,
-    });
+    // ⚠️ area는 전용면적(공급 아님) — 85㎡ 초과면 농특세가 붙는다.
+    const ln = loanFor(m.price, { lawdCd, area: m.exclusiveAr });
     if (!ln || ln.maxLoan <= 0) continue;
     const gap = assets - ln.requiredCash;
     if (!best || gap > best.gap) best = { gap, model: m };

@@ -35,6 +35,23 @@ export function daysBetweenYmd(fromYmd, toYmd) {
   return Math.round((b - a) / 86400000);
 }
 
+// "YYYY-MM-DD"에 n년을 더한 달력 날짜. 양도세 비과세(보유 2년) 같은 "n년 뒤" 계산용.
+// ⚠️ Date 객체로 더하면 안 된다 — 두 가지가 동시에 틀어진다:
+//    ① new Date("2026-08-30")은 **UTC 자정**이라 setFullYear가 런타임 타임존에 끌려간다.
+//    ② 2/29에 2년을 더하면 그 해엔 2/29가 없어 3/1로 조용히 넘어간다(말일 클램프가 맞다).
+//    문자열로 더하고 말일을 클램프해 타임존과 무관하게 만든다. 결과를 daysUntil에 넘기면
+//    D-day도 로컬 자정 기준으로 일관된다(kstDate 계열과 같은 원칙 — 날짜는 문자열로 다룬다).
+export function addYearsYmd(ymd, years) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(ymd || ""));
+  if (!m) return null;
+  const y = +m[1] + years;
+  const mo = +m[2];
+  if (mo < 1 || mo > 12) return null;
+  const lastDay = new Date(Date.UTC(y, mo, 0)).getUTCDate(); // 그 해 그 달의 말일
+  const d = Math.min(+m[3], lastDay);
+  return `${y}-${String(mo).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+}
+
 // 임대차 만기 라벨. 갱신청구 가능기간 = 만기 6~2개월 전(주택임대차보호법 §6의3, 2020-07-31 시행,
 // 6개월~2개월 구간은 2020-12-10 이후 계약 기준. 확인일 2026-07-05).
 export function leaseLabel(leaseEnd) {

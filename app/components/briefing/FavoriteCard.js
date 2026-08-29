@@ -2,12 +2,12 @@
 
 // ⭐ 관심 단지 — ★로 담은 단지의 최근 30일 새 실거래.
 //
-// 자금 여유는 지도와 같은 loanPolicy.calcMaxLoan으로 계산한다 —
+// 자금 여유는 지도와 같은 loanPolicy.loanCalcFor 어댑터로 계산한다 —
 // 두 화면의 숫자가 어긋날 수 없게 하려고 계산을 공유한다.
 // ⚠️ hasIncome은 props로 받아 그대로 쓴다(카드 안에서 다시 판정하지 말 것) —
 //    판정 기준이 갈리면 지도와 브리핑의 배지가 어긋난다.
 
-import { calcMaxLoan } from "../../lib/loanPolicy";
+import { loanCalcFor } from "../../lib/loanPolicy";
 import { formatManwon, shortDate } from "../../lib/format";
 import { regionName } from "../../lib/regions";
 import { isNew, complexKey } from "../../lib/briefingSeen";
@@ -17,6 +17,7 @@ import {
 } from "./styles";
 
 export default function FavoriteCard({ complexes, seen, profile, assets, hasIncome }) {
+  const loanFor = loanCalcFor(profile, assets);
   return (
     <section>
       <div style={cardHead}>
@@ -28,18 +29,7 @@ export default function FavoriteCard({ complexes, seen, profile, assets, hasInco
           const fresh = isNew(c, seen);
           const chg = c.prevAmount ? ((top.amount - c.prevAmount) / c.prevAmount) * 100 : null;
           const ln = hasIncome
-            ? calcMaxLoan({
-                price: top.amount,
-                lawdCd: c.lawdCd,
-                householdType: profile.householdType,
-                isFirstTime: profile.isFirstTime,
-                annualIncome: Number(profile.income),
-                existingAnnualDebt: Number(profile.existingDebt) || 0,
-                rate: (Number(profile.rate) || 0) / 100,
-                termYears: Number(profile.termYears) || 40,
-                area: top.area,
-                assets,
-              })
+            ? loanFor(top.amount, { lawdCd: c.lawdCd, area: top.area })
             : null;
           const gap = ln && ln.maxLoan > 0 ? assets - ln.requiredCash : null;
           return (

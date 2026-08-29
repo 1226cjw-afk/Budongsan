@@ -9,7 +9,7 @@
 //    "새로 들어온 것 보여주기"라 지연이 곧 신선도다(2026-08-04).
 
 import { useMemo, useState } from "react";
-import { calcMaxLoan } from "../../lib/loanPolicy";
+import { loanCalcFor } from "../../lib/loanPolicy";
 import { formatManwon, shortDate } from "../../lib/format";
 import { toPyeong } from "../../lib/tradeStats";
 import { regionName } from "../../lib/regions";
@@ -24,26 +24,17 @@ const MAX_ROWS = 12;
 export default function DealFeedCard({ feed, favorites, profile, assets, hasIncome }) {
   const [tab, setTab] = useState("fav");
 
-  // 자금 여유 계산은 지도·관심단지 카드와 같은 calcMaxLoan을 쓴다(숫자가 어긋나지 않게).
+  // 자금 여유 계산은 지도·관심단지·청약 카드와 **같은 어댑터**(loanCalcFor)를 쓴다 —
+  // 네 화면이 인자를 각자 조립하던 시절엔 한 필드만 빠져도 그 화면만 조용히 달라졌다.
+  const loanFor = useMemo(() => loanCalcFor(profile, assets), [profile, assets]);
   const withGap = useMemo(
     () =>
       (feed || []).map((t) => {
         if (!hasIncome) return { ...t, gap: null };
-        const ln = calcMaxLoan({
-          price: t.amount,
-          lawdCd: t.lawdCd,
-          householdType: profile.householdType,
-          isFirstTime: profile.isFirstTime,
-          annualIncome: Number(profile.income),
-          existingAnnualDebt: Number(profile.existingDebt) || 0,
-          rate: (Number(profile.rate) || 0) / 100,
-          termYears: Number(profile.termYears) || 40,
-          area: t.area,
-          assets,
-        });
+        const ln = loanFor(t.amount, { lawdCd: t.lawdCd, area: t.area });
         return { ...t, gap: ln && ln.maxLoan > 0 ? assets - ln.requiredCash : null };
       }),
-    [feed, profile, assets, hasIncome]
+    [feed, loanFor, assets, hasIncome]
   );
 
   const rows = useMemo(() => {

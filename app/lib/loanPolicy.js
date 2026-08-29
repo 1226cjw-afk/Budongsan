@@ -155,3 +155,33 @@ export function calcMaxLoan({
     dsrRatio,
   };
 }
+
+// ── 자금 프로필 어댑터 ──────────────────────────────────────────────────
+// 화면의 자금 프로필(문자열이 섞인 입력) → calcMaxLoan 인자로 정규화한다.
+// ⚠️ **calcMaxLoan을 직접 부르지 말고 이걸 쓸 것.** 호출부가 네 곳(지도 평형 카드 ·
+//    🆕 새 거래 피드 · ⭐ 관심 단지 · 🏗 청약 레이더)인데 전부 같은 10개 필드를 손으로
+//    조립하고 있었다. 하나만 빠뜨려도 **그 화면만** 조용히 다른 숫자를 낸다 —
+//    2026-08-14 농특세 사고가 정확히 그것이었다(세부패널이 area를 안 넘겨 전용 85㎡ 초과
+//    평형에서 농특세가 통째로 누락, 리스트는 "부족"인데 카드는 "여유"). 이 계열은
+//    build도 npm test도 못 잡는다 — lib은 멀쩡하고 호출부만 틀리기 때문이다.
+//    자금 입력을 새로 추가할 땐 여기 한 곳만 고치면 네 화면이 함께 따라온다.
+// 연소득이 없으면 DSR을 계산할 수 없으므로 언제나 null을 돌려주는 함수를 준다.
+export function loanCalcFor(profile, assets = 0) {
+  const annualIncome = Number(profile?.income);
+  if (!(annualIncome > 0)) return () => null;
+  return function loanFor(price, { lawdCd, area = 0 } = {}) {
+    if (!price) return null;
+    return calcMaxLoan({
+      price,
+      lawdCd,
+      householdType: profile.householdType,
+      isFirstTime: profile.isFirstTime,
+      annualIncome,
+      existingAnnualDebt: Number(profile.existingDebt) || 0,
+      rate: (Number(profile.rate) || 0) / 100,
+      termYears: Number(profile.termYears) || 40,
+      area, // ⚠️ 전용 85㎡ 초과 농특세 판정 — 빼면 필요자금이 작게 나온다
+      assets,
+    });
+  };
+}

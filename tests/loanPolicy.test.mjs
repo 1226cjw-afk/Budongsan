@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { calcMaxLoan } from "../app/lib/loanPolicy.js";
+import { calcMaxLoan, loanCalcFor } from "../app/lib/loanPolicy.js";
 import { calcAcquisitionCost } from "../app/lib/acquisitionCost.js";
 
 const BASE = {
@@ -82,4 +82,57 @@ test("85㎡ 초과는 농특세만큼 필요자금이 더 든다", () => {
   const small = calcMaxLoan({ ...BASE, area: 84 });
   const big = calcMaxLoan({ ...BASE, area: 114 });
   assert.equal(big.requiredCash - small.requiredCash, Math.round(90000 * 0.002));
+});
+
+// ── loanCalcFor: 화면 4곳이 공유하는 단일 어댑터 ─────────────────────────
+// ⚠️ 지도 평형 카드 · 🆕 새 거래 피드 · ⭐ 관심 단지 · 🏗 청약 레이더가 예전엔 각자
+//    calcMaxLoan 인자 10개를 손으로 조립했다. 하나만 빠져도 **그 화면만** 조용히 달라진다
+//    — 2026-08-14 농특세 사고(area 누락)가 정확히 그것이었고 build도 test도 못 잡았다.
+//    아래 테스트가 어댑터를 통과하는 필드를 잠근다.
+const PROFILE = {
+  income: "8000", assets: "50000", existingDebt: "500",
+  householdType: "무주택", isFirstTime: false, rate: "4", termYears: "40",
+};
+
+test("loanCalcFor는 area를 그대로 흘려보낸다 (85㎡ 초과 농특세)", () => {
+  const loanFor = loanCalcFor(PROFILE, 50000);
+  const small = loanFor(110000, { lawdCd: "41173", area: 84 });
+  const large = loanFor(110000, { lawdCd: "41173", area: 135 });
+  assert.equal(small.acquisitionCost.ruralTax, 0); // 85㎡ 이하 — 농특세 없음
+  assert.ok(large.acquisitionCost.ruralTax > 0, "85㎡ 초과인데 농특세가 0이면 area가 유실된 것");
+  assert.ok(large.requiredCash > small.requiredCash);
+});
+
+test("loanCalcFor는 area를 안 주면 0으로 본다 (농특세 없음)", () => {
+  const ln = loanCalcFor(PROFILE, 50000)(110000, { lawdCd: "41173" });
+  assert.equal(ln.acquisitionCost.ruralTax, 0);
+});
+
+test("loanCalcFor 결과는 calcMaxLoan 직접 호출과 완전히 같다", () => {
+  const viaAdapter = loanCalcFor(PROFILE, 50000)(90000, { lawdCd: "41173", area: 84.96 });
+  const direct = calcMaxLoan({
+    price: 90000, lawdCd: "41173", householdType: "무주택", isFirstTime: false,
+    annualIncome: 8000, existingAnnualDebt: 500, rate: 0.04, termYears: 40,
+    area: 84.96, assets: 50000,
+  });
+  assert.deepEqual(viaAdapter, direct);
+});
+
+test("연소득이 없으면 언제나 null (DSR 계산 불가)", () => {
+  assert.equal(loanCalcFor({ ...PROFILE, income: "" }, 50000)(90000, { lawdCd: "41173" }), null);
+  assert.equal(loanCalcFor({ ...PROFILE, income: "0" }, 50000)(90000, { lawdCd: "41173" }), null);
+  assert.equal(loanCalcFor(null, 50000)(90000, { lawdCd: "41173" }), null);
+});
+
+test("가격이 없으면 null (거래 없는 평형)", () => {
+  assert.equal(loanCalcFor(PROFILE, 50000)(0, { lawdCd: "41173" }), null);
+  assert.equal(loanCalcFor(PROFILE, 50000)(null, { lawdCd: "41173" }), null);
+});
+
+test("문자열로 들어오는 화면 입력을 숫자로 정규화한다", () => {
+  const ln = loanCalcFor(PROFILE, 50000)(90000, { lawdCd: "41173", area: 84 });
+  assert.ok(Number.isFinite(ln.maxLoan) && ln.maxLoan > 0);
+  assert.ok(Number.isFinite(ln.monthlyPayment));
+  // 금리는 % → 소수로 나뉘어 들어간다(4 → 0.04). 안 나누면 월납이 터무니없이 커진다.
+  assert.ok(ln.monthlyPayment < 2000, `월납이 ${ln.monthlyPayment}만원 — rate 변환이 빠졌나`);
 });

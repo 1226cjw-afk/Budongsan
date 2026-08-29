@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { monthsToLabel, daysBetweenYmd, kstDate } from "../app/lib/format.js";
+import { monthsToLabel, daysBetweenYmd, kstDate, addYearsYmd } from "../app/lib/format.js";
 
 test("12개월 미만은 개월로", () => {
   assert.equal(monthsToLabel(1), "약 1개월");
@@ -81,4 +81,28 @@ test("KST 오프셋 정의는 format.js 한 곳뿐이다", async () => {
   }
   assert.deepEqual(owners, ["../app/lib/format.js"],
     `KST 오프셋이 흩어졌다: ${owners.join(", ")} — format.kstDate()를 쓸 것`);
+});
+
+// ── addYearsYmd: 보유 2년(양도세 비과세) D-day의 기준일 ──────────────────
+// ⚠️ 예전엔 세부패널이 `new Date(취득일)` + setFullYear(+2)로 직접 셌다. 두 가지가 틀어진다:
+//    ① new Date("YYYY-MM-DD")는 **UTC 자정**이라 (free - Date.now())로 세면 KST 브라우저에서
+//       당일 09:00 이전에 하루가 더 남은 것처럼 나온다("오늘부터 비과세"인 날 아침에 D-1).
+//    ② 2/29 + 2년은 그 해에 2/29가 없어 3/1로 조용히 넘어간다.
+//    문자열로 더하고 말일을 클램프해 타임존과 무관하게 만든다. (2026-08-30 교정)
+test("addYearsYmd는 타임존과 무관하게 달력 날짜를 더한다", () => {
+  assert.equal(addYearsYmd("2024-08-30", 2), "2026-08-30");
+  assert.equal(addYearsYmd("2024-01-01", 2), "2026-01-01");
+  assert.equal(addYearsYmd("2024-12-31", 2), "2026-12-31");
+});
+
+test("윤년 2/29에 2년을 더하면 3/1이 아니라 2/28로 클램프된다", () => {
+  assert.equal(addYearsYmd("2024-02-29", 2), "2026-02-28"); // 2026은 평년
+  assert.equal(addYearsYmd("2024-02-29", 4), "2028-02-29"); // 2028은 윤년 — 그대로
+});
+
+test("addYearsYmd는 형식이 어긋나면 null (화면에서 조용히 생략)", () => {
+  assert.equal(addYearsYmd("", 2), null);
+  assert.equal(addYearsYmd(null, 2), null);
+  assert.equal(addYearsYmd("2024-8-3", 2), null);
+  assert.equal(addYearsYmd("2024-13-01", 2), null);
 });
