@@ -6,6 +6,8 @@ export const C = {
   border: "#e2e8f0", divider: "#f1f5f9",
   blue: "#2563eb", blueSoft: "#eff6ff",
   green: "#059669", red: "#dc2626", amber: "#f59e0b",
+  // 뉴스 중요도 배지 배경(필독·주목). blueSoft와 같은 계열의 옅은 톤 — 글자색은 red/amber.
+  redSoft: "#fef2f2", amberSoft: "#fffbeb",
 };
 
 // 레이어드 소프트 섀도(다층·저불투명) — 패널/모달용.

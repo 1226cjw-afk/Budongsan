@@ -52,6 +52,17 @@ export function addYearsYmd(ymd, years) {
   return `${y}-${String(mo).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
 }
 
+// "YYYY-MM-DD"에 n일을 더한 달력 날짜(음수 = 과거). 뉴스 "최근 7일" 컷오프용.
+// ⚠️ addYearsYmd와 같은 이유로 Date 객체 산술을 피한다 — 다만 일 단위는 말일 클램프가 아니라
+//    실제로 월·연을 넘어가야 하므로 Date.UTC로 정규화한다(daysBetweenYmd와 같은 방식:
+//    UTC로 고정하면 런타임 타임존이 서버든 브라우저든 결과가 같다).
+export function addDaysYmd(ymd, days) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(ymd || ""));
+  if (!m) return null;
+  const t = Date.UTC(+m[1], +m[2] - 1, +m[3]) + days * 86400000;
+  return new Date(t).toISOString().slice(0, 10);
+}
+
 // 임대차 만기 라벨. 갱신청구 가능기간 = 만기 6~2개월 전(주택임대차보호법 §6의3, 2020-07-31 시행,
 // 6개월~2개월 구간은 2020-12-10 이후 계약 기준. 확인일 2026-07-05).
 export function leaseLabel(leaseEnd) {

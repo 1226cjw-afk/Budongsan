@@ -6,18 +6,25 @@
 // 디자인은 지도 패널(KakaoMap.js)의 팔레트·흰 카드 언어를 따른다.
 
 import { useEffect, useMemo, useState } from "react";
-import { classifyNews, NEWS_CATEGORIES } from "../lib/news";
+import { classifyNews, newsPriority, isRegionKeyword, NEWS_CATEGORIES } from "../lib/news";
 import { daysBetweenYmd, kstDate } from "../lib/format";
 import { C, CARD_SHADOW, TRANSITION } from "../lib/palette";
 import Briefing from "../components/Briefing";
+
+const PROFILE_KEY = "re_loan_profile"; // KakaoMap·Briefing과 동일 키
 
 const CAT_EMOJI = {
   "매매·시세": "📈", "정책·세금": "🏛️", "대출·금리": "💰",
   "분양·청약": "🏗️", "재건축·재개발": "🔨", "전월세": "🏠", "기타": "📎",
 };
 
-// 즐겨찾기 지역 키워드("분당구 아파트" 꼴)인지 — 기본 키워드는 " 아파트"로 끝나지 않음.
-const isRegionKeyword = (k) => (k || "").endsWith(" 아파트");
+// 중요도별 표시(lib/news.js의 newsPriority가 판정). "일반"은 항목이 없다 — 색을 **안 쓰는 것**이
+// 색 구분의 절반이다. 셋 다 칠하면 아무것도 눈에 띄지 않는다.
+// ⚠️ 배지 글자색은 C.amber(#f59e0b)가 아니라 amber-700 — 옅은 배경 위에서 대비가 모자란다.
+const PRIORITY_STYLE = {
+  필독: { bar: C.red, badge: { background: C.redSoft, color: C.red } },
+  주목: { bar: C.amber, badge: { background: C.amberSoft, color: "#b45309" } },
+};
 
 // "오늘 · 7월 8일 (화)" 꼴 날짜 그룹 라벨.
 // ⚠️ "오늘/어제" 판정은 **KST 달력 날짜**로 한다(format.kstDate). 예전엔 setHours(0,0,0,0)로
@@ -40,10 +47,13 @@ function timeLabel(iso) {
 
 export default function NewsPage() {
   const [items, setItems] = useState(null); // null = 로딩 중
+  const [days, setDays] = useState(7); // 서버가 자른 기간 — 라벨이 서버와 어긋나지 않게 받아온다
   const [error, setError] = useState("");
-  const [sel, setSel] = useState(""); // "" = 전체 | "region" = ⭐ 관심지역 | 카테고리명
+  // "" = 전체 | "must" = 🔴 필독 | "region" = ⭐ 관심지역 | 카테고리명
+  const [sel, setSel] = useState("");
   const [collecting, setCollecting] = useState(false);
   const [notice, setNotice] = useState("");
+  const [hasIncome, setHasIncome] = useState(false);
 
   const load = async () => {
     try {
@@ -51,6 +61,7 @@ export default function NewsPage() {
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
       setItems(json.items);
+      if (json.days) setDays(json.days);
       setError("");
     } catch (e) {
       setError(e.message);
@@ -58,6 +69,17 @@ export default function NewsPage() {
     }
   };
   useEffect(() => { load(); }, []);
+
+  // 소득을 입력해 뒀으면 대출·금리 기사의 중요도가 한 칸 올라간다(newsPriority).
+  // ⚠️ localStorage는 마운트 이후에만 — useState 초기값으로 읽으면 하이드레이션 불일치.
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(PROFILE_KEY);
+      if (raw) setHasIncome(Number(JSON.parse(raw)?.income) > 0);
+    } catch {
+      /* 무시 */
+    }
+  }, []);
 
   // 수동 수집 — 로컬(CRON_SECRET 미설정)용. 배포에선 401 → 안내만.
   const collectNow = async () => {
@@ -78,10 +100,18 @@ export default function NewsPage() {
     setCollecting(false);
   };
 
-  // 카테고리는 제목에서 한 번만 계산해 붙여둔다.
+  // 카테고리·중요도는 제목에서 한 번만 계산해 붙여둔다(둘 다 DB 컬럼 없음).
   const withCat = useMemo(
-    () => (items || []).map((it) => ({ ...it, cat: classifyNews(it.title) })),
-    [items]
+    () =>
+      (items || []).map((it) => {
+        const cat = classifyNews(it.title);
+        return { ...it, cat, priority: newsPriority({ ...it, cat }, { hasIncome }) };
+      }),
+    [items, hasIncome]
+  );
+  const mustCount = useMemo(
+    () => withCat.filter((it) => it.priority === "필독").length,
+    [withCat]
   );
   // 실제 기사가 있는 카테고리만 칩으로 노출(순서는 NEWS_CATEGORIES = 매매·시세 우선).
   const cats = useMemo(() => {
@@ -91,6 +121,7 @@ export default function NewsPage() {
   const hasRegion = useMemo(() => withCat.some((it) => isRegionKeyword(it.keyword)), [withCat]);
   const filtered = useMemo(() => {
     if (!sel) return withCat;
+    if (sel === "must") return withCat.filter((it) => it.priority === "필독");
     if (sel === "region") return withCat.filter((it) => isRegionKeyword(it.keyword));
     return withCat.filter((it) => it.cat === sel);
   }, [withCat, sel]);
@@ -116,7 +147,7 @@ export default function NewsPage() {
         </div>
         <h1 style={title}>📰 부동산 뉴스</h1>
         <div style={subtitle}>
-          매일 아침 6:30 자동 수집 · 수도권(서울·경기·인천) 매매 위주 + 즐겨찾기 지역
+          최근 {days}일 · 매일 아침 6:30 자동 수집 · 수도권(서울·경기·인천) 매매 위주 + 즐겨찾기 지역
           {notice && <span style={noticeText}> — {notice}</span>}
         </div>
 
@@ -128,6 +159,14 @@ export default function NewsPage() {
             <button onClick={() => setSel("")} style={{ ...chip, ...(sel === "" ? chipOn : null) }}>
               전체
             </button>
+            {mustCount > 0 && (
+              <button
+                onClick={() => setSel("must")}
+                style={{ ...chip, ...(sel === "must" ? chipMustOn : null) }}
+              >
+                🔴 필독 {mustCount}
+              </button>
+            )}
             {cats.map((c) => (
               <button key={c} onClick={() => setSel(c)} style={{ ...chip, ...(sel === c ? chipOn : null) }}>
                 {CAT_EMOJI[c]} {c}
@@ -147,7 +186,7 @@ export default function NewsPage() {
           <div style={{ ...emptyBox, color: C.red }}>{error}</div>
         ) : filtered.length === 0 ? (
           <div style={emptyBox}>
-            아직 수집된 뉴스가 없어요.
+            최근 {days}일 안에 들어온 뉴스가 없어요.
             <br />
             <span style={{ color: C.muted, fontSize: 12 }}>
               내일 아침부터 자동 수집되고, 위 "지금 수집"으로 바로 채울 수도 있어요.
@@ -158,16 +197,25 @@ export default function NewsPage() {
             <section key={label}>
               <div style={dayHead}>{label}</div>
               <div style={card}>
-                {group.map((it, i) => (
+                {group.map((it, i) => {
+                  const pr = PRIORITY_STYLE[it.priority];
+                  return (
                   <a
                     key={it.link}
                     href={it.link}
                     target="_blank"
                     rel="noreferrer"
                     className="news-row"
-                    style={{ ...row, ...(i > 0 ? rowDivider : null) }}
+                    style={{
+                      ...row,
+                      ...(i > 0 ? rowDivider : null),
+                      ...(pr ? { borderLeftColor: pr.bar } : null),
+                    }}
                   >
-                    <div style={rowTitle}>{it.title}</div>
+                    <div style={{ ...rowTitle, ...(it.priority === "필독" ? rowTitleMust : null) }}>
+                      {pr && <span style={{ ...prBadge, ...pr.badge }}>{it.priority}</span>}
+                      {it.title}
+                    </div>
                     {it.description && <div style={rowDesc}>{it.description}</div>}
                     <div style={rowMeta}>
                       {it.source && <span>{it.source}</span>}
@@ -178,7 +226,8 @@ export default function NewsPage() {
                       )}
                     </div>
                   </a>
-                ))}
+                  );
+                })}
               </div>
             </section>
           ))
@@ -220,14 +269,27 @@ const chip = {
   whiteSpace: "nowrap", transition: TRANSITION,
 };
 const chipOn = { background: C.blueSoft, borderColor: "#bfdbfe", color: C.blue };
+// 🔴 필독 칩은 켜졌을 때 빨강 — 행의 컬러바와 같은 색이어야 "이 칩이 저 색을 고른다"가 읽힌다.
+const chipMustOn = { background: C.redSoft, borderColor: "#fecaca", color: C.red };
 const dayHead = { fontSize: 12, fontWeight: 700, color: C.sub, margin: "10px 2px 6px" };
 const card = {
   background: "#fff", borderRadius: 16, border: `1px solid ${C.border}`,
   boxShadow: CARD_SHADOW, overflow: "hidden",
 };
-const row = { display: "block", padding: "12px 16px", textDecoration: "none", color: "inherit" };
+// ⚠️ 일반 행도 3px 투명 좌측 보더를 갖는다 — 중요도 행에만 보더를 주면 그 행들만 3px 밀려
+//    제목 왼쪽 줄이 들쭉날쭉해진다. 색만 갈아끼우는 구조로 정렬을 지킨다.
+//    borderLeftColor만 덮으므로 shorthand `border`를 쓰면 안 된다(React dev 경고).
+const row = {
+  display: "block", padding: "12px 16px", textDecoration: "none", color: "inherit",
+  borderLeftWidth: 3, borderLeftStyle: "solid", borderLeftColor: "transparent",
+};
 const rowDivider = { borderTop: `1px solid ${C.divider}` };
 const rowTitle = { fontSize: 14, fontWeight: 600, lineHeight: 1.45 };
+const rowTitleMust = { fontWeight: 700 };
+const prBadge = {
+  display: "inline-block", padding: "1px 6px", borderRadius: 6, marginRight: 6,
+  fontSize: 10, fontWeight: 800, letterSpacing: "-0.01em", verticalAlign: "middle",
+};
 const rowDesc = {
   fontSize: 12, color: C.sub, lineHeight: 1.5, marginTop: 3,
   display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden",

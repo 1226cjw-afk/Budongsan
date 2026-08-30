@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { monthsToLabel, daysBetweenYmd, kstDate, addYearsYmd } from "../app/lib/format.js";
+import { monthsToLabel, daysBetweenYmd, kstDate, addYearsYmd, addDaysYmd } from "../app/lib/format.js";
 
 test("12개월 미만은 개월로", () => {
   assert.equal(monthsToLabel(1), "약 1개월");
@@ -105,4 +105,30 @@ test("addYearsYmd는 형식이 어긋나면 null (화면에서 조용히 생략)
   assert.equal(addYearsYmd(null, 2), null);
   assert.equal(addYearsYmd("2024-8-3", 2), null);
   assert.equal(addYearsYmd("2024-13-01", 2), null);
+});
+
+// ── addDaysYmd: 뉴스 "최근 7일" 컷오프의 기준일 ────────────────────────────
+// ⚠️ new Date(ymd)에 산술을 걸면 UTC 자정 기준이라 서버(UTC)/브라우저(KST)가 갈린다 —
+//    addYearsYmd와 같은 이유로 문자열 연산이다.
+test("addDaysYmd는 타임존과 무관하게 달력 날짜를 더하고 뺀다", () => {
+  assert.equal(addDaysYmd("2026-08-31", -6), "2026-08-25"); // 최근 7일 = 오늘 포함
+  assert.equal(addDaysYmd("2026-08-25", 6), "2026-08-31");
+  assert.equal(addDaysYmd("2026-08-31", 0), "2026-08-31");
+});
+
+test("addDaysYmd는 월·연 경계를 넘는다", () => {
+  assert.equal(addDaysYmd("2026-09-03", -6), "2026-08-28");
+  assert.equal(addDaysYmd("2027-01-02", -6), "2026-12-27");
+  assert.equal(addDaysYmd("2026-12-31", 1), "2027-01-01");
+});
+
+test("addDaysYmd는 윤년 2월 29일을 건너뛰지 않는다", () => {
+  assert.equal(addDaysYmd("2028-03-01", -1), "2028-02-29"); // 2028은 윤년
+  assert.equal(addDaysYmd("2026-03-01", -1), "2026-02-28"); // 평년
+});
+
+test("addDaysYmd는 형식이 어긋나면 null", () => {
+  assert.equal(addDaysYmd("", -6), null);
+  assert.equal(addDaysYmd(null, -6), null);
+  assert.equal(addDaysYmd("2026-8-3", -6), null);
 });
