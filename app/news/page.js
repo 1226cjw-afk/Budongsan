@@ -57,7 +57,9 @@ export default function NewsPage() {
 
   const load = async () => {
     try {
-      const res = await fetch("/api/news");
+      // ⚠️ limit 상향(300→600): 2026-09-02 키워드를 단지 축으로 넓히면서 최근 7일이 이미
+      //    372건이라 기존 상한을 넘긴다. 잘리면 📢 요주의 단지의 집계 모수가 함께 줄어든다.
+      const res = await fetch("/api/news?limit=600");
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
       setItems(json.items);
@@ -152,7 +154,7 @@ export default function NewsPage() {
         </div>
 
         {/* 브리핑은 칩 필터의 영향을 받지 않는 고정 영역 → 전체 목록(withCat)을 넘긴다 */}
-        <Briefing news={withCat} />
+        <Briefing news={withCat} days={days} />
 
         {withCat.length > 0 && (
           <div style={chipRow}>

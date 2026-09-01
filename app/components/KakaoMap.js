@@ -9,7 +9,7 @@ import { favKey, distMeters, summarize, groupByPyeong } from "../lib/tradeStats"
 import { countNew } from "../lib/briefingSeen";
 import {
   AREA_FILTERS, PRICE_FILTERS, MONTHLY_FILTERS, bandFor,
-  HOT_PCT, SORT_OPTIONS, SORT_GAP,
+  HOT_PCT, SORT_OPTIONS, SORT_GAP, matchesComplexName,
 } from "../lib/mapFilters";
 import { bestFit, buildComplexRows, sortComplexRows } from "../lib/complexRows";
 import HelpModal from "./HelpModal";
@@ -45,6 +45,21 @@ const PROGRAMMATIC_MOVE_MS = 1200;
 const VIEW_KEY = "re_map_view"; // 마지막으로 보던 지도 위치(지역·중심·확대) — 재방문 복원용
 
 const LIST_INFO_TOP = 30; // 세대수 lazy 조회 대상: 정렬 상위 N개 행
+
+// 뉴스 📢 요주의 단지 카드에서 넘어온 딥링크(/?lawdCd=11530&q=구로주공).
+// ⚠️ useSearchParams가 아니라 location.search를 쓴다 — localStorage와 같은 이유로 마운트
+//    이후에만 읽어야 하고(하이드레이션), App Router에서 useSearchParams는 Suspense 경계를
+//    요구해 이 클라이언트 컴포넌트 하나 때문에 트리를 손대야 한다.
+function readDeepLink() {
+  try {
+    const p = new URLSearchParams(window.location.search);
+    const lawdCd = p.get("lawdCd");
+    if (!lawdCd || !VALID_CODES.has(lawdCd)) return null;
+    return { lawdCd, q: p.get("q") || "" };
+  } catch {
+    return null;
+  }
+}
 
 // 마지막으로 보던 지도 위치. 새로고침·재방문 시 그 자리에서 이어 보게 한다.
 // ⚠️ localStorage는 클라이언트에만 있으므로 반드시 마운트 이후(지도 초기화 effect)에만 부른다 —
@@ -133,6 +148,8 @@ export default function KakaoMap() {
   const [rank, setRank] = useState(new Map()); // `${umd}|${apt}` → {yoyPct, recentN, pastN}
   const [sortBy, setSortBy] = useState("yoy");
   const [onlyBuyable, setOnlyBuyable] = useState(false); // 구매가능 단지만 (자금 설정 시)
+  const [nameQuery, setNameQuery] = useState(""); // 리스트 이름 검색(딥링크 q로도 채워진다)
+  const pendingPickRef = useRef(false); // 딥링크 착지 후 결과가 1곳이면 자동 선택(1회성)
 
   const [sheet, setSheet] = useState(null);
   const [householdMap, setHouseholdMap] = useState(new Map()); // favKey → 세대수|null (lazy)
@@ -307,7 +324,10 @@ export default function KakaoMap() {
       window.kakao.maps.load(() => {
         const kakao = window.kakao;
         // 지난번 보던 자리부터 복원. 없으면 기본 위치로 띄우고 아래에서 현위치를 물어본다.
-        const saved = readSavedView();
+        // ⚠️ 딥링크가 저장된 위치를 **이긴다**. 안 그러면 📢 요주의 단지에서 링크로 들어와도
+        //    마지막에 보던 지역으로 되돌아가, 링크가 아무 일도 안 한 것처럼 보인다.
+        const link = readDeepLink();
+        const saved = link ? null : readSavedView();
         const map = new kakao.maps.Map(containerRef.current, {
           center: new kakao.maps.LatLng(saved?.lat ?? DEFAULT_CENTER.lat, saved?.lng ?? DEFAULT_CENTER.lng),
           level: saved?.level ?? 5,
@@ -316,7 +336,21 @@ export default function KakaoMap() {
         geocoderRef.current = new kakao.maps.services.Geocoder();
         suppressIdleRef.current = Date.now(); // 생성 직후 첫 idle은 판정하지 않는다
 
-        if (saved && VALID_CODES.has(saved.lawdCd)) {
+        if (link) {
+          // 좌표를 모르는 채 지역만 아는 상태 → 데이터가 오면 지역 전체를 자동 맞춤한다
+          // (좌표 없는 옛 즐겨찾기를 여는 gotoFavorite 폴백과 같은 경로).
+          fitRef.current = true;
+          lawdCdRef.current = link.lawdCd;
+          setLawdCd(link.lawdCd);
+          if (link.q) {
+            setNameQuery(link.q);
+            pendingPickRef.current = true;
+            setSheet("list"); // 모바일: 목록 시트를 열어 착지 결과를 바로 보여준다
+          }
+          // 주소창을 정리한다 — 안 지우면 사용자가 지도를 옮긴 뒤 새로고침할 때마다
+          // 딥링크가 다시 발동해 원래 자리로 끌려간다.
+          window.history.replaceState({}, "", "/");
+        } else if (saved && VALID_CODES.has(saved.lawdCd)) {
           fitRef.current = false; // 복원한 위치를 자동 맞춤(setBounds)이 덮지 않도록
           lawdCdRef.current = saved.lawdCd;
           setLawdCd(saved.lawdCd);
@@ -689,9 +723,25 @@ export default function KakaoMap() {
 
   const listRows = useMemo(() => {
     if (!baseRows) return null;
-    const filtered = affordMode && onlyBuyable ? baseRows.filter((r) => r.buyable) : baseRows;
-    return sortComplexRows(filtered, sortBy);
-  }, [baseRows, affordMode, onlyBuyable, sortBy]);
+    let rows = affordMode && onlyBuyable ? baseRows.filter((r) => r.buyable) : baseRows;
+    // ⚠️ 이름 검색은 **리스트 전용** 필터다. buildComplexRows(마커와 공유하는 배열)에 넣으면
+    //    검색이 지도 마커까지 지워 "이 단지가 어디쯤인가"라는 맥락이 통째로 사라진다.
+    if (nameQuery.trim()) {
+      rows = rows.filter((r) => matchesComplexName(r.c.aptNm, nameQuery, regionName(lawdCd)));
+    }
+    return sortComplexRows(rows, sortBy);
+  }, [baseRows, affordMode, onlyBuyable, sortBy, nameQuery, lawdCd]);
+
+  // 딥링크로 착지해 검색 결과가 **한 곳뿐이면** 그 단지를 자동으로 연다 — 거기까지 가야
+  // "지도에서 보기"가 끝난 것이다(평형·시세·★ 버튼이 다 세부패널에 있다).
+  // ⚠️ 한 번만 소비하는 ref다. 사용자가 검색창에 타이핑하다 우연히 1곳이 될 때마다
+  //    패널이 튀어나오면 방해가 된다 — 자동 선택은 링크로 들어온 그 순간만이다.
+  useEffect(() => {
+    if (!pendingPickRef.current || !listRows) return;
+    pendingPickRef.current = false;
+    if (listRows.length === 1) selectComplex(listRows[0].c);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [listRows]);
 
   function renderMarkers(rows) {
     const data = tradesData;
@@ -967,6 +1017,7 @@ export default function KakaoMap() {
       affordMode={affordMode}
       onlyBuyable={onlyBuyable} setOnlyBuyable={setOnlyBuyable}
       householdMap={householdMap}
+      nameQuery={nameQuery} setNameQuery={setNameQuery}
     />
   );
 

@@ -111,6 +111,23 @@ export const sortSelect = {
   border: `1px solid ${C.border}`, fontSize: 12, background: "#fff",
   color: C.text, cursor: "pointer", fontWeight: 600, transition: TRANSITION,
 };
+// 이름 검색 — 📢 요주의 단지의 "지도에서 보기"가 착지하는 자리이기도 하다.
+// ⚠️ nameSearchInput의 flex:1은 **가로 행(nameSearchBar) 안**이라 안전하다. 컨트롤 패널의
+//    세로 flex 직계 자식에 flex:1을 주면 세로로 자란다(시군구 select 304px 사고, 2026-07-03).
+export const nameSearchBar = { display: "flex", alignItems: "center", gap: 6, paddingTop: 8 };
+export const nameSearchInput = {
+  flex: 1, minWidth: 0, padding: "5px 8px", borderRadius: 8,
+  border: `1px solid ${C.border}`, fontSize: 12, background: "#fff",
+  color: C.text, transition: TRANSITION,
+};
+export const nameSearchClear = {
+  padding: "5px 8px", borderRadius: 8, border: `1px solid ${C.border}`,
+  background: "#fff", color: C.sub, fontSize: 11, fontWeight: 700,
+  cursor: "pointer", whiteSpace: "nowrap",
+};
+export const nameSearchMiss = {
+  fontSize: 12, color: C.muted, padding: "8px 0", lineHeight: 1.6,
+};
 export const onlyBuyLabel = {
   display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11,
   color: C.sub, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap",

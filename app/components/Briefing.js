@@ -9,8 +9,10 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { classifyNews } from "../lib/news";
+import { buildNewsWatch } from "../lib/newsWatch";
 import { loadSeen, markSeen } from "../lib/briefingSeen";
 import { emptyHint } from "./briefing/styles";
+import NewsWatchCard from "./briefing/NewsWatchCard";
 import FavoriteCard from "./briefing/FavoriteCard";
 import ScheduleCard from "./briefing/ScheduleCard";
 import MarketSignalCard from "./briefing/MarketSignalCard";
@@ -33,7 +35,7 @@ function usableAssets(p) {
   return (Number(p.assets) || 0) + net;
 }
 
-export default function Briefing({ news }) {
+export default function Briefing({ news, days = 7 }) {
   const [data, setData] = useState(null); // null = 로딩 중
   const [subs, setSubs] = useState(null); // 🏗 청약 — /api/briefing과 무관, 같이 출발시킨다
   const [profile, setProfile] = useState(null);
@@ -76,6 +78,11 @@ export default function Briefing({ news }) {
         .slice(0, MAX_IMPACT),
     [news]
   );
+
+  // 📢 요주의 단지 — 뉴스에 반복 등장한 단지. /api/news 응답에서 바로 파생하므로
+  // 추가 요청도 DB 컬럼도 없다(classifyNews와 같은 방침).
+  // ⚠️ useMemo 필수 — news가 300~600건이고 제목마다 정규식을 여러 벌 돌린다.
+  const watch = useMemo(() => buildNewsWatch(news || []), [news]);
 
   // ★ 단지 키 집합 — 피드에서 "내 단지 거래"를 가려낸다.
   // ⚠️ useMemo로 뺄 것. JSX에 `new Set(...)`을 인라인하면 렌더마다 새 참조가 생겨
@@ -122,6 +129,10 @@ export default function Briefing({ news }) {
         <div style={emptyHint}>
           지도에서 <b>★</b>로 관심 단지를 담으면, 여기에 그 단지의 새 실거래와 일정이 떠요.
         </div>
+        {/* ⚠️ 요주의 단지는 이 분기에서 **반드시** 렌더한다. ★가 하나도 없는 사람에게
+            ★를 담게 만드는 게 이 카드의 목적이라, 여기서 빠지면 정작 필요한 사람이 못 본다
+            (청약 레이더가 같은 이유로 이 분기에 있다). */}
+        {watch.length > 0 && <NewsWatchCard rows={watch} days={days} />}
         <SubscriptionCard items={subs} profile={profile} assets={assets} hasIncome={hasIncome} />
       </div>
     );
@@ -151,6 +162,9 @@ export default function Briefing({ news }) {
       )}
       {/* 청약도 지도와 같은 calcMaxLoan으로 자금 판정을 붙인다 → profile·assets가 필요하다. */}
       <SubscriptionCard items={subs} profile={profile} assets={assets} hasIncome={hasIncome} />
+      {/* 📢 요주의 단지는 "새 후보 발견"이라 매일 바뀌지 않는다 → 매일 바뀌는 카드(관심단지·
+          일정·신호·피드)보다 아래, 탐색성 카드인 청약 옆에 둔다. */}
+      {watch.length > 0 && <NewsWatchCard rows={watch} days={days} />}
       {impact.length > 0 && <ImpactNewsCard news={impact} hasIncome={hasIncome} />}
     </div>
   );

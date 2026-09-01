@@ -50,3 +50,34 @@ export const SORT_OPTIONS = [
   { v: "old", label: "🏗 준공 오래된순" },
 ];
 export const SORT_GAP = { v: "gap", label: "✓ 자금 여유순" }; // 내 자금 설정 시에만 노출
+
+// ── 단지 이름 검색 ──────────────────────────────────────────────────────────
+// 사람이 직접 치기도 하지만, 주 용도는 📢 요주의 단지 카드의 "지도에서 보기"가 넘겨주는
+// **뉴스 단지명**을 실거래명에 맞추는 것이다.
+//
+// ⚠️ 이 필터는 **리스트 전용**이다. complexRows(마커와 공유하는 배열)에 넣지 말 것 —
+//    검색이 지도 마커까지 지워 "이 단지가 어디쯤인가"라는 맥락이 통째로 사라진다.
+const nameNorm = (s) => (s || "").replace(/[\s()·,\-_]/g, "");
+const regionKeyOf = (regionName) => {
+  const parts = String(regionName || "").trim().split(" ");
+  return (parts.find((p) => p.endsWith("구")) || parts[parts.length - 1] || "").replace(/[시구군]$/, "");
+};
+
+export function matchesComplexName(aptNm, query, regionName = "") {
+  const q = nameNorm(query);
+  if (!q) return true;
+  const a = nameNorm(aptNm);
+  if (a.includes(q)) return true;
+  // 검색어가 실거래명을 품는 경우(뉴스 '송파삼성래미안' ↔ 실거래 '삼성래미안').
+  // ⚠️ 두 글자 이름은 제외 — '삼성'이 '송파삼성래미안' 검색에 걸리면 목록이 오염된다.
+  if (a.length >= 3 && q.includes(a)) return true;
+  // ⚠️ 지역 접두어를 뗀 형태로 한 번 더. 뉴스는 지역을 앞에 붙여 쓰고(구로주공)
+  //    국토부 실거래명은 지역을 뺀 형태가 많다(주공1·주공2) — 2026-09-02 실측으로 확인한
+  //    어긋남이고, 이 한 줄이 없으면 요주의 카드의 지도 착지가 대부분 "0곳"이 된다.
+  const key = regionKeyOf(regionName);
+  if (key.length >= 2 && q.startsWith(key)) {
+    const rest = q.slice(key.length);
+    if (rest.length >= 2 && a.includes(rest)) return true;
+  }
+  return false;
+}

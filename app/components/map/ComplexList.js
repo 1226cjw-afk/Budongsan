@@ -11,6 +11,7 @@ import { formatManwon } from "../../lib/format";
 import { HOT_PCT } from "../../lib/mapFilters";
 import {
   sortBar, sortSelect, onlyBuyLabel, listScroll, hintText,
+  nameSearchBar, nameSearchInput, nameSearchClear, nameSearchMiss,
   rowTop, rowName, rowPrice, rowSub, rowBadges,
   hotBadge, upBadge, downBadge, rebuildBadge, gapOkBadge, gapNoBadge,
 } from "../mapStyles";
@@ -18,9 +19,25 @@ import {
 export default function ComplexList({
   rows, selected, onSelect, sortBy, setSortBy, sortOptions,
   affordMode, onlyBuyable, setOnlyBuyable, householdMap,
+  nameQuery = "", setNameQuery,
 }) {
+  const searching = nameQuery.trim().length > 0;
   return (
     <>
+      <div style={nameSearchBar}>
+        <input
+          value={nameQuery}
+          onChange={(e) => setNameQuery(e.target.value)}
+          placeholder="단지 이름 검색"
+          style={nameSearchInput}
+          aria-label="단지 이름 검색"
+        />
+        {searching && (
+          <button type="button" onClick={() => setNameQuery("")} style={nameSearchClear}>
+            지우기
+          </button>
+        )}
+      </div>
       <div style={sortBar}>
         <select value={sortBy} onChange={(e) => setSortBy(e.target.value)} style={sortSelect}>
           {sortOptions.map((o) => (
@@ -46,7 +63,22 @@ export default function ComplexList({
         {!rows ? (
           <div style={hintText}>불러오는 중…</div>
         ) : rows.length === 0 ? (
-          <div style={hintText}>조건에 맞는 단지가 없습니다</div>
+          // ⚠️ 검색 중일 때는 다른 안내를 준다. 📢 요주의 단지에서 넘어온 이름은 아직
+          //    실거래가 없는 분양 신축일 수 있고(그건 정상 경로다), 그때 "조건에 맞는 단지가
+          //    없습니다"만 뜨면 필터를 잘못 건드린 줄 알고 헤매게 된다.
+          searching ? (
+            <div style={nameSearchMiss}>
+              <b>{nameQuery.trim()}</b>과(와) 일치하는 단지가 없어요.
+              <br />
+              아직 실거래가 없는 신축이거나, 실거래 등록명이 다를 수 있어요.
+              <br />
+              <button type="button" onClick={() => setNameQuery("")} style={{ ...nameSearchClear, marginTop: 6 }}>
+                검색어 지우고 전체 보기
+              </button>
+            </div>
+          ) : (
+            <div style={hintText}>조건에 맞는 단지가 없습니다</div>
+          )
         ) : (
           rows.map((r, i) => {
             const isOn = selected && selected.umdNm === r.c.umdNm && selected.aptNm === r.c.aptNm;
