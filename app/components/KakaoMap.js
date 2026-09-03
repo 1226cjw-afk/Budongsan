@@ -115,8 +115,11 @@ export default function KakaoMap() {
   const suppressIdleRef = useRef(0); // 코드가 지도를 옮긴 시각 — 지역 재판정 억제 창
   const idleTimerRef = useRef(null); // idle 디바운스 타이머
   const myLocRef = useRef(null); // 현위치 점 오버레이
+  const initialViewRef = useRef(null); // 첫 화면(딥링크 | 마지막 위치) — 아래 부트스트랩이 정하고 지도 초기화가 이어받는다
 
-  const [ready, setReady] = useState(false);
+  const [ready, setReady] = useState(false); // 카카오 SDK 로드 + 지도 생성 완료
+  // 첫 지역 확정 완료. ⚠️ 실거래·상승률 로드는 ready가 아니라 **이걸** 기다린다(부트스트랩 주석 참조).
+  const [booted, setBooted] = useState(false);
   const [status, setStatus] = useState("지도 로딩 중…");
   const [lawdCd, setLawdCd] = useState(DEFAULT_CODE);
   const [area, setArea] = useState("all");
@@ -315,7 +318,45 @@ export default function KakaoMap() {
     );
   }
 
+  // 첫 지역 확정 (1회) — 딥링크 > 마지막으로 보던 위치 > 기본값.
+  // ⚠️ 이 판정은 원래 지도 초기화(카카오 SDK 로드 콜백) **안에** 있었다. 그래서 지도와 아무
+  //    관계도 없는 /api/trades·/api/rank가 SDK 로드가 끝나기를 기다렸다
+  //    (2026-09-04 로컬 prod 실측: 게이트 없는 /api/favorites는 492ms에 출발하는데
+  //     같은 페이지의 /api/trades는 1749ms — 1.26초를 그냥 흘렸다).
+  //    판정에 필요한 건 location.search와 localStorage뿐이라 마운트 직후 알 수 있다.
+  // ⚠️ 딥링크가 저장된 위치를 **이긴다**. 안 그러면 📢 요주의 단지에서 링크로 들어와도
+  //    마지막에 보던 지역으로 되돌아가, 링크가 아무 일도 안 한 것처럼 보인다.
+  // ⚠️ localStorage·location은 마운트 이후에만 읽는다(useState 초기값 → 하이드레이션 불일치).
+  useEffect(() => {
+    const link = readDeepLink();
+    const saved = link ? null : readSavedView();
+    initialViewRef.current = { link, saved };
+
+    if (link) {
+      // 좌표를 모르는 채 지역만 아는 상태 → 데이터가 오면 지역 전체를 자동 맞춤한다
+      // (좌표 없는 옛 즐겨찾기를 여는 gotoFavorite 폴백과 같은 경로).
+      // fitRef는 마커 effect가 소비하는데 그건 ready 이후라, 여기서 미리 정해 둬도 안전하다.
+      fitRef.current = true;
+      lawdCdRef.current = link.lawdCd;
+      setLawdCd(link.lawdCd);
+      if (link.q) {
+        setNameQuery(link.q);
+        pendingPickRef.current = true;
+        setSheet("list"); // 모바일: 목록 시트를 열어 착지 결과를 바로 보여준다
+      }
+      // 주소창을 정리한다 — 안 지우면 사용자가 지도를 옮긴 뒤 새로고침할 때마다
+      // 딥링크가 다시 발동해 원래 자리로 끌려간다.
+      window.history.replaceState({}, "", "/");
+    } else if (saved && VALID_CODES.has(saved.lawdCd)) {
+      fitRef.current = false; // 복원한 위치를 자동 맞춤(setBounds)이 덮지 않도록
+      lawdCdRef.current = saved.lawdCd;
+      setLawdCd(saved.lawdCd);
+    }
+    setBooted(true);
+  }, []);
+
   // 지도 초기화 (1회) — services 라이브러리로 좌표→지역 변환 + 빈 곳 클릭→가까운 단지.
+  // ⚠️ 이 effect는 위 부트스트랩보다 **뒤에** 선언돼 있어야 한다(initialViewRef를 읽는다).
   useEffect(() => {
     const KEY = process.env.NEXT_PUBLIC_KAKAO_MAP_KEY;
     const SCRIPT_ID = "kakao-map-sdk";
@@ -324,10 +365,9 @@ export default function KakaoMap() {
       window.kakao.maps.load(() => {
         const kakao = window.kakao;
         // 지난번 보던 자리부터 복원. 없으면 기본 위치로 띄우고 아래에서 현위치를 물어본다.
-        // ⚠️ 딥링크가 저장된 위치를 **이긴다**. 안 그러면 📢 요주의 단지에서 링크로 들어와도
-        //    마지막에 보던 지역으로 되돌아가, 링크가 아무 일도 안 한 것처럼 보인다.
-        const link = readDeepLink();
-        const saved = link ? null : readSavedView();
+        // 지역 확정·딥링크 처리는 부트스트랩 effect가 이미 끝냈다(데이터도 그때 출발했다).
+        // 여기서 남은 일은 그 결정을 **지도에 반영**하는 것뿐이다.
+        const { link, saved } = initialViewRef.current || { link: null, saved: null };
         const map = new kakao.maps.Map(containerRef.current, {
           center: new kakao.maps.LatLng(saved?.lat ?? DEFAULT_CENTER.lat, saved?.lng ?? DEFAULT_CENTER.lng),
           level: saved?.level ?? 5,
@@ -335,26 +375,6 @@ export default function KakaoMap() {
         mapRef.current = map;
         geocoderRef.current = new kakao.maps.services.Geocoder();
         suppressIdleRef.current = Date.now(); // 생성 직후 첫 idle은 판정하지 않는다
-
-        if (link) {
-          // 좌표를 모르는 채 지역만 아는 상태 → 데이터가 오면 지역 전체를 자동 맞춤한다
-          // (좌표 없는 옛 즐겨찾기를 여는 gotoFavorite 폴백과 같은 경로).
-          fitRef.current = true;
-          lawdCdRef.current = link.lawdCd;
-          setLawdCd(link.lawdCd);
-          if (link.q) {
-            setNameQuery(link.q);
-            pendingPickRef.current = true;
-            setSheet("list"); // 모바일: 목록 시트를 열어 착지 결과를 바로 보여준다
-          }
-          // 주소창을 정리한다 — 안 지우면 사용자가 지도를 옮긴 뒤 새로고침할 때마다
-          // 딥링크가 다시 발동해 원래 자리로 끌려간다.
-          window.history.replaceState({}, "", "/");
-        } else if (saved && VALID_CODES.has(saved.lawdCd)) {
-          fitRef.current = false; // 복원한 위치를 자동 맞춤(setBounds)이 덮지 않도록
-          lawdCdRef.current = saved.lawdCd;
-          setLawdCd(saved.lawdCd);
-        }
 
         // 지도가 멈추면 ① 위치를 저장하고 ② 잠시 더 조용할 때만 중심 시군구를 재판정한다.
         kakao.maps.event.addListener(map, "idle", () => {
@@ -402,7 +422,10 @@ export default function KakaoMap() {
 
         setReady(true);
         // 저장된 위치가 없는 첫 방문에만 현위치를 물어본다(매번 권한 팝업이 뜨지 않게).
-        if (!saved) locateMe({ initial: true });
+        // ⚠️ 딥링크로 들어왔을 땐 부르지 말 것 — 딥링크면 saved가 null이라 이 조건만으론
+        //    현위치를 묻게 되고, 허용돼 있으면 setLawdCd가 링크의 지역을 덮어써 📢 요주의
+        //    단지에서 온 사용자가 엉뚱한 지역에 착지한다(2026-09-04 확인, 링크는 09-02 도입).
+        if (!saved && !link) locateMe({ initial: true });
       });
     }
 
@@ -515,11 +538,14 @@ export default function KakaoMap() {
     });
   }
 
+  // ⚠️ ready(지도 SDK)가 아니라 booted를 기다린다 — 실거래는 지도와 무관한 데이터라
+  //    SDK 로드를 기다릴 이유가 없다. 마커는 어차피 아래 렌더 effect가 ready 이후에 그리고,
+  //    먼저 도착한 데이터는 tradesData에 앉아 기다린다.
   useEffect(() => {
-    if (!ready) return;
+    if (!booted) return;
     loadTrades(lawdCd);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready, lawdCd]);
+  }, [booted, lawdCd]);
 
   // 지역이 바뀌면 저장된 뷰의 지역도 맞춰 둔다 — 셀렉트로 바꾼 직후엔 지도가 아직 안 움직여
   // idle이 안 오므로, 이게 없으면 새로고침 때 좌표와 지역이 어긋난다.
@@ -530,8 +556,9 @@ export default function KakaoMap() {
   }, [ready, lawdCd]);
 
   // 지역 전체 1년 상승률(/api/rank) — 리스트 정렬·🔥 배지용. 지도와 병렬로 비동기 로드.
+  // 실거래 로드와 같은 이유로 ready가 아니라 booted 기준(바로 위 loadTrades effect 참조).
   useEffect(() => {
-    if (!ready) return;
+    if (!booted) return;
     let alive = true;
     setRank(new Map());
     fetch(`/api/rank?lawdCd=${lawdCd}`)
@@ -544,7 +571,7 @@ export default function KakaoMap() {
     return () => {
       alive = false;
     };
-  }, [ready, lawdCd]);
+  }, [booted, lawdCd]);
 
   // 단지 바뀌면 추세를 '가장 거래 많은 평형'으로 초기화. 추세는 평형별만 본다
   // (전체는 평형이 섞여 시세가 들쭉날쭉 → 추세 의미가 흐려짐).
