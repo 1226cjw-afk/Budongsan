@@ -7,6 +7,7 @@ import { C } from "../lib/palette";
 import { kstDate, formatManwon } from "../lib/format";
 import { favKey, distMeters, summarize, groupByPyeong } from "../lib/tradeStats";
 import useIsMobile from "./useIsMobile";
+import { useShell } from "./AppShell";
 import { PROFILE_EVENT } from "./useLoanProfile";
 import {
   AREA_FILTERS, PRICE_FILTERS, MONTHLY_FILTERS, bandFor,
@@ -103,6 +104,7 @@ const DEFAULT_PROFILE = {
 };
 
 export default function KakaoMap() {
+  const { tab, focusRef } = useShell();
   const containerRef = useRef(null);
   const mapRef = useRef(null);
   const geocoderRef = useRef(null);
@@ -155,6 +157,7 @@ export default function KakaoMap() {
   const pendingPickRef = useRef(false); // 딥링크 착지 후 결과가 1곳이면 자동 선택(1회성)
 
   const [sheet, setSheet] = useState(null);
+  const [listSnap, setListSnap] = useState("peek"); // 모바일 지도 시트 높이: peek | half | full
   const [householdMap, setHouseholdMap] = useState(new Map()); // favKey → 세대수|null (lazy)
   const infoInflightRef = useRef(new Set()); // 세대수 조회 중복 방지
 
@@ -947,6 +950,36 @@ export default function KakaoMap() {
     setRegionToast(null);
     setLawdCd(f.lawd_cd);
   }
+
+  // 🔥 오늘 탭(핫플·관심 단지·새 거래)에서 단지로 보내기. AppShell.focusComplex가 부른다.
+  // ⚠️ 지역 전환은 selectRegion 경로를 그대로 탄다 — stale 가드·idle 억제·토스트 끔을 새로 만들지 않는다.
+  // ⚠️ 1곳 자동 선택은 딥링크의 pendingPickRef를 재사용한다. 단, 같은 지역이면 데이터 재로드가 없어
+  //    listRows가 안 바뀔 수 있으므로(같은 검색어 재클릭) dataRef에서 바로 찾는다.
+  function focusComplex({ lawdCd: code, aptNm }) {
+    if (!VALID_CODES.has(code)) return;
+    const q = aptNm || "";
+    setNameQuery(q);
+    if (code === lawdCdRef.current && dataRef.current?.lawdCd === code) {
+      const hits = (dataRef.current.complexes || []).filter((c) =>
+        matchesComplexName(c.aptNm, q, regionName(code))
+      );
+      if (hits.length === 1) selectComplex(hits[0]);
+      else setListSnap("half");
+      return;
+    }
+    pendingPickRef.current = !!q;
+    setListSnap("half");
+    selectRegion(code);
+  }
+  useEffect(() => {
+    focusRef.current = focusComplex; // 매 렌더 최신 클로저로 교체(selectComplex가 isMobile을 본다)
+  });
+
+  // 탭 셸: 오늘·뉴스 패널이 지도를 덮었다가 걷힐 때. 컨테이너 크기는 안 바뀌지만(덮기만 함)
+  // 모바일 주소창 높이 변화 등으로 어긋날 수 있어 복귀 시 한 번 맞춘다(비용 ~0).
+  useEffect(() => {
+    if (tab === "map" && mapRef.current) mapRef.current.relayout();
+  }, [tab]);
 
   // 내 자금이 꺼지면 자금 기반 정렬·필터도 초기화.
   useEffect(() => {
