@@ -180,9 +180,9 @@ export default function Briefing({ news, active = true }) {
   );
 }
 
-// 첫 카드(🔥 핫플)의 대략적인 높이 — Task 10 실측으로 조정.
+// 첫 카드(🔥 핫플)의 높이. 2026-09-29 로컬 prod 실측 256px(390px 폭, 행 2개) — 행이 늘면 더 커진다.
 const skeleton = {
-  height: 220,
+  height: 256,
   borderRadius: 16,
   background: "linear-gradient(180deg, #ffffff 0%, #f1f5f9 100%)",
   border: "1px solid #e2e8f0",

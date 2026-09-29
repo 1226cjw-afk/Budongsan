@@ -49,7 +49,13 @@ const VIEW_KEY = "re_map_view"; // 마지막으로 보던 지도 위치(지역·
 
 const LIST_INFO_TOP = 30; // 세대수 lazy 조회 대상: 정렬 상위 N개 행
 
-// 뉴스 📢 요주의 단지 카드에서 넘어온 딥링크(/?lawdCd=11530&q=구로주공).
+// 외부에서 들어온 딥링크(/?lawdCd=11530&q=구로주공). 앱 안(🔥 오늘 탭)에선 focusComplex를 쓴다.
+// ⚠️ 한 번 소비한 링크는 같은 탭 세션에서 다시 발동하지 않는다(LINK_SEEN_KEY). 주소창 정리만으론
+//    부족했다 — 탭 셸에서 <Link href="/">로 돌아오면 Next 라우터가 첫 로드 URL(`/?lawdCd=…`)을
+//    되살린다(2026-09-29 로컬 prod 실측. replaceState 즉시·지연, router.replace 즉시·지연 4가지 모두
+//    실패 — 정적 프리렌더 라우트의 캐시 URL로 보인다). 그 상태로 새로고침하면 딥링크가 다시 발동해
+//    보던 자리에서 끌려간다.
+const LINK_SEEN_KEY = "re_link_seen";
 // ⚠️ useSearchParams가 아니라 location.search를 쓴다 — localStorage와 같은 이유로 마운트
 //    이후에만 읽어야 하고(하이드레이션), App Router에서 useSearchParams는 Suspense 경계를
 //    요구해 이 클라이언트 컴포넌트 하나 때문에 트리를 손대야 한다.
@@ -58,6 +64,7 @@ function readDeepLink() {
     const p = new URLSearchParams(window.location.search);
     const lawdCd = p.get("lawdCd");
     if (!lawdCd || !VALID_CODES.has(lawdCd)) return null;
+    if (sessionStorage.getItem(LINK_SEEN_KEY) === window.location.search) return null; // 이미 소비함
     return { lawdCd, q: p.get("q") || "" };
   } catch {
     return null;
@@ -359,7 +366,24 @@ export default function KakaoMap() {
       }
       // 주소창을 정리한다 — 안 지우면 사용자가 지도를 옮긴 뒤 새로고침할 때마다
       // 딥링크가 다시 발동해 원래 자리로 끌려간다.
-      window.history.replaceState({}, "", "/");
+      // 한 틱 미룬다 — 자식 effect가 App Router effect보다 먼저 돌아 즉시 부르면 Next가 모르는 변경이 된다.
+      // ⚠️ 이 정리는 **첫 화면용**일 뿐이다. 탭 이동 뒤 Next가 옛 URL을 되살리는 건 못 막는다 —
+      //    그래서 재발동 방지는 LINK_SEEN_KEY가 맡는다(readDeepLink 주석 참조).
+      setTimeout(() => window.history.replaceState(null, "", "/"), 0);
+      // 소비 표시는 **페이지를 떠날 때** 남긴다. 읽는 순간 남기면 dev StrictMode의 effect 2회 실행에서
+      // 두 번째가 링크를 "이미 소비함"으로 보고 버린다.
+      const consumed = window.location.search;
+      window.addEventListener(
+        "pagehide",
+        () => {
+          try {
+            sessionStorage.setItem(LINK_SEEN_KEY, consumed);
+          } catch {
+            /* 무시 */
+          }
+        },
+        { once: true }
+      );
     } else if (saved && VALID_CODES.has(saved.lawdCd)) {
       fitRef.current = false; // 복원한 위치를 자동 맞춤(setBounds)이 덮지 않도록
       lawdCdRef.current = saved.lawdCd;
