@@ -5,6 +5,8 @@
 import { supabaseAdmin } from "./supabaseServer";
 import { regionPrefix, regionToken } from "./regions";
 import { excludeAbnormal } from "./tradeStats";
+import { kstDate } from "./format";
+import { diffNewTrades, shouldRecord, buildReportRows } from "./tradeReports";
 
 const RTMS_ENDPOINT =
   "http://apis.data.go.kr/1613000/RTMSDataSvcAptTrade/getRTMSDataSvcAptTrade";
@@ -139,6 +141,44 @@ async function fetchMonthFromApi(lawdCd, ymd) {
 // — 국토부는 동시 호출 스로틀이 없어 전량 동시가 최속. months 상한이 36이라 사실상 무제한.
 const RTMS_CONCURRENCY = 36;
 
+// 🔥 핫플 — 재수집으로 새로 나타난 거래를 trade_reports에 기록한다(신고일 = 처음 본 KST 날짜).
+// ⚠️ 기록 지점은 **여기 한 곳**이다. cron 재수집이든 사용자 방문(이번 달 12h TTL 만료)이든 같은
+//    경로를 타야 기준이 하나로 유지된다(excludeAbnormal이 시세의 단일 지점인 것과 같은 방침).
+// ⚠️ 옛 payload는 upsert **전에** 읽어야 한다 — 덮어쓴 뒤엔 비교 대상이 사라진다. refresh 모드는
+//    캐시를 안 읽으므로 여기서 한 번 더 조회한다(수집된 달이 있을 때만, 요청당 1쿼리).
+// 가격 기준 pool = 이번 호출에서 받은 달 전부(cron은 이번 달+지난달).
+// 실패는 삼킨다 — 핫플 기록이 실거래 조회를 죽이면 안 된다.
+async function recordReports(lawdCd, okRows) {
+  try {
+    const { data: prevRows, error } = await supabaseAdmin
+      .from("trade_raw_cache")
+      .select("deal_ymd, trades, fetched_at")
+      .eq("lawd_cd", lawdCd)
+      .in("deal_ymd", okRows.map((r) => r.deal_ymd));
+    if (error) throw error;
+    const prevBy = new Map((prevRows || []).map((r) => [r.deal_ymd, r]));
+    const pool = okRows.flatMap((r) => r.trades);
+    const reportedOn = kstDate();
+    const rows = [];
+    for (const r of okRows) {
+      const prev = prevBy.get(r.deal_ymd);
+      if (!shouldRecord(prev)) continue;
+      const fresh = diffNewTrades(prev.trades, r.trades);
+      rows.push(...buildReportRows({ lawdCd, reportedOn, fresh, pool }));
+    }
+    if (rows.length) {
+      const { error: insErr } = await supabaseAdmin
+        .from("trade_reports")
+        .upsert(rows, { onConflict: "lawd_cd,trade_key", ignoreDuplicates: true });
+      if (insErr) throw insErr;
+    }
+    return rows.length;
+  } catch (e) {
+    console.error("[trade_reports]", e.message);
+    return 0;
+  }
+}
+
 // 여러 달 원본 거래를 한 번에 → 캐시 1회 일괄 조회, 미스만 제한 병렬 수집 + 배치 저장.
 // 반환: { byYmd: Map(ymd → trades[]), fetchedYmds: 국토부에서 새로 받은 달들,
 //         latestFetched: 가장 최근 fetched_at(ISO)|null — 신선도 표시용, 추가 조회 없이 산출,
@@ -209,6 +249,7 @@ export async function fetchRawMonths(lawdCd, ymds, { refresh = false, cacheOnly 
     if (okRows.length) {
       latestFetched = now; // 방금 받은 게 가장 신선.
       if (supabaseAdmin) {
+        await recordReports(lawdCd, okRows); // ⚠️ upsert보다 먼저 — 옛 payload와 비교해야 한다
         const { error } = await supabaseAdmin
           .from("trade_raw_cache")
           .upsert(okRows, { onConflict: "lawd_cd,deal_ymd" });
