@@ -7,7 +7,8 @@
 // ⚠️ 카드가 쓸 데이터의 fetch도 **반드시 여기서** 시작할 것. 카드 안에서 fetch하면 그 카드는
 //    아래 로딩 게이트(data === null) 뒤에야 마운트돼, 서로 무관한 요청이 직렬화된다(2026-08-05).
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import useLoanProfile from "./useLoanProfile";
 import { classifyNews } from "../lib/news";
 import { buildNewsWatch } from "../lib/newsWatch";
 import { loadSeen, markSeen } from "../lib/briefingSeen";
@@ -20,7 +21,6 @@ import DealFeedCard from "./briefing/DealFeedCard";
 import SubscriptionCard from "./briefing/SubscriptionCard";
 import ImpactNewsCard from "./briefing/ImpactNewsCard";
 
-const PROFILE_KEY = "re_loan_profile"; // KakaoMap과 동일 키
 const IMPACT_CATS = ["대출·금리", "정책·세금"]; // 내 자금 계획에 직접 영향
 const MAX_IMPACT = 3;
 
@@ -35,20 +35,15 @@ function usableAssets(p) {
   return (Number(p.assets) || 0) + net;
 }
 
-export default function Briefing({ news, days = 7 }) {
+export default function Briefing({ news, days = 7, active = true }) {
   const [data, setData] = useState(null); // null = 로딩 중
   const [subs, setSubs] = useState(null); // 🏗 청약 — /api/briefing과 무관, 같이 출발시킨다
-  const [profile, setProfile] = useState(null);
+  // ⚠️ 마운트 때 한 번 읽지 말고 구독할 것 — 오늘 탭은 keep-alive라 지도에서 바꾼 자금이 안 따라온다.
+  const profile = useLoanProfile();
   const [seen, setSeen] = useState({});
 
   useEffect(() => {
     setSeen(loadSeen()); // 렌더용 스냅샷 — markSeen 후에도 이번 방문의 🆕는 유지된다
-    try {
-      const raw = localStorage.getItem(PROFILE_KEY);
-      if (raw) setProfile(JSON.parse(raw));
-    } catch {
-      /* 무시 */
-    }
     fetch("/api/briefing")
       .then((r) => r.json())
       .then((d) => {
@@ -66,6 +61,21 @@ export default function Briefing({ news, days = 7 }) {
       .then((d) => setSubs(d.items || []))
       .catch(() => setSubs([])); // 실패해도 나머지 브리핑은 살린다
   }, []);
+
+  // keep-alive라 다시 들어와도 마운트되지 않는다 → 탭에 다시 들어올 때 조용히 재조회(스켈레톤 없이).
+  // 지도에서 ★를 담고 오면 관심 단지·피드에 바로 보여야 한다.
+  const seenActive = useRef(false);
+  useEffect(() => {
+    if (!active) return;
+    if (!seenActive.current) {
+      seenActive.current = true; // 첫 활성화는 위 마운트 effect가 이미 받았다
+      return;
+    }
+    fetch("/api/briefing")
+      .then((r) => r.json())
+      .then((d) => d.complexes && setData(d))
+      .catch(() => {});
+  }, [active]);
 
   // 내게 영향 있는 뉴스 — 대출·금리/정책·세금 + 관심지역 기사.
   const impact = useMemo(

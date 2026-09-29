@@ -5,13 +5,15 @@
 // 카테고리는 lib/news.js의 classifyNews(제목 룰)로 렌더 시 계산 — 과거 기사에도 소급.
 // 디자인은 지도 패널(KakaoMap.js)의 팔레트·흰 카드 언어를 따른다.
 
-import { useEffect, useMemo, useState } from "react";
-import { classifyNews, newsPriority, isRegionKeyword, NEWS_CATEGORIES } from "../lib/news";
+// 2026-09-29: /news 페이지에서 📰 뉴스 **탭**으로 옮겼다. 기사 fetch·분류는 셸(AppShell.useNewsFeed)이
+// 한 번만 하고 🔥 오늘 탭과 공유한다. 브리핑 카드는 오늘 탭(TodayView)으로 분리됐다.
+
+import { useMemo, useState } from "react";
+import { isRegionKeyword, NEWS_CATEGORIES } from "../lib/news";
 import { daysBetweenYmd, kstDate } from "../lib/format";
 import { C, CARD_SHADOW, TRANSITION } from "../lib/palette";
-import Briefing from "../components/Briefing";
-
-const PROFILE_KEY = "re_loan_profile"; // KakaoMap·Briefing과 동일 키
+import { useShell } from "./AppShell";
+import { TabHeader } from "./TabBar";
 
 const CAT_EMOJI = {
   "매매·시세": "📈", "정책·세금": "🏛️", "대출·금리": "💰",
@@ -45,43 +47,14 @@ function timeLabel(iso) {
   return new Date(iso).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit", hour12: false });
 }
 
-export default function NewsPage() {
-  const [items, setItems] = useState(null); // null = 로딩 중
-  const [days, setDays] = useState(7); // 서버가 자른 기간 — 라벨이 서버와 어긋나지 않게 받아온다
-  const [error, setError] = useState("");
+export default function NewsList() {
+  // items: null = 로딩 중 / days: 서버가 자른 기간(라벨이 서버와 어긋나지 않게)
+  const { news } = useShell();
+  const { items, withCat, days, error, reload } = news;
   // "" = 전체 | "must" = 🔴 필독 | "region" = ⭐ 관심지역 | 카테고리명
   const [sel, setSel] = useState("");
   const [collecting, setCollecting] = useState(false);
   const [notice, setNotice] = useState("");
-  const [hasIncome, setHasIncome] = useState(false);
-
-  const load = async () => {
-    try {
-      // ⚠️ limit 상향(300→600): 2026-09-02 키워드를 단지 축으로 넓히면서 최근 7일이 이미
-      //    372건이라 기존 상한을 넘긴다. 잘리면 📢 요주의 단지의 집계 모수가 함께 줄어든다.
-      const res = await fetch("/api/news?limit=600");
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
-      setItems(json.items);
-      if (json.days) setDays(json.days);
-      setError("");
-    } catch (e) {
-      setError(e.message);
-      setItems([]);
-    }
-  };
-  useEffect(() => { load(); }, []);
-
-  // 소득을 입력해 뒀으면 대출·금리 기사의 중요도가 한 칸 올라간다(newsPriority).
-  // ⚠️ localStorage는 마운트 이후에만 — useState 초기값으로 읽으면 하이드레이션 불일치.
-  useEffect(() => {
-    try {
-      const raw = localStorage.getItem(PROFILE_KEY);
-      if (raw) setHasIncome(Number(JSON.parse(raw)?.income) > 0);
-    } catch {
-      /* 무시 */
-    }
-  }, []);
 
   // 수동 수집 — 로컬(CRON_SECRET 미설정)용. 배포에선 401 → 안내만.
   const collectNow = async () => {
@@ -94,7 +67,7 @@ export default function NewsPage() {
       else if (!res.ok) setNotice(json.error || `수집 실패 (HTTP ${res.status})`);
       else {
         setNotice(`새 기사 ${json.inserted}건 수집`);
-        await load();
+        await reload();
       }
     } catch (e) {
       setNotice(e.message);
@@ -102,15 +75,6 @@ export default function NewsPage() {
     setCollecting(false);
   };
 
-  // 카테고리·중요도는 제목에서 한 번만 계산해 붙여둔다(둘 다 DB 컬럼 없음).
-  const withCat = useMemo(
-    () =>
-      (items || []).map((it) => {
-        const cat = classifyNews(it.title);
-        return { ...it, cat, priority: newsPriority({ ...it, cat }, { hasIncome }) };
-      }),
-    [items, hasIncome]
-  );
   const mustCount = useMemo(
     () => withCat.filter((it) => it.priority === "필독").length,
     [withCat]
@@ -139,22 +103,23 @@ export default function NewsPage() {
   }, [filtered]);
 
   return (
-    <div style={page}>
       <div style={column}>
-        <div style={headerRow}>
-          <a href="/" style={backLink}>← 지도</a>
-          <button onClick={collectNow} disabled={collecting || items === null} style={collectBtn}>
-            {collecting ? "수집 중…" : "🔄 지금 수집"}
-          </button>
-        </div>
-        <h1 style={title}>📰 부동산 뉴스</h1>
-        <div style={subtitle}>
-          최근 {days}일 · 매일 아침 6:30 자동 수집 · 수도권(서울·경기·인천) 매매 위주 + 즐겨찾기 지역
-          {notice && <span style={noticeText}> — {notice}</span>}
-        </div>
-
-        {/* 브리핑은 칩 필터의 영향을 받지 않는 고정 영역 → 전체 목록(withCat)을 넘긴다 */}
-        <Briefing news={withCat} days={days} />
+        <TabHeader
+          title="📰 뉴스"
+          sub={`최근 ${days}일 · 매일 6:30 수집 · 수도권`}
+          right={
+            <button
+              onClick={collectNow}
+              disabled={collecting || items === null}
+              style={collectBtn}
+              title="지금 수집(로컬 전용)"
+              aria-label="지금 수집"
+            >
+              {collecting ? "⏳" : "🔄"}
+            </button>
+          }
+        />
+        {notice && <div style={noticeText}>{notice}</div>}
 
         {withCat.length > 0 && (
           <div style={chipRow}>
@@ -235,34 +200,25 @@ export default function NewsPage() {
           ))
         )}
       </div>
-      <style>{`.news-row { transition: background 0.15s; }
-        .news-row:hover { background: #f8fafc; }`}</style>
-    </div>
   );
 }
 
-const page = {
-  minHeight: "100vh", background: "linear-gradient(180deg, #f8fafc 0%, #eef2f7 100%)", color: C.text,
-  padding: "18px 14px calc(24px + env(safe-area-inset-bottom))",
-};
-const column = { maxWidth: 640, margin: "0 auto", display: "flex", flexDirection: "column", gap: 10 };
-const headerRow = { display: "flex", alignItems: "center", justifyContent: "space-between" };
-const backLink = {
-  fontSize: 13, fontWeight: 600, color: C.sub, textDecoration: "none",
-  padding: "6px 10px", background: "#fff", borderRadius: 10, border: `1px solid ${C.border}`,
-  boxShadow: "0 1px 2px rgba(15,23,42,0.04)", transition: TRANSITION,
+// .news-row hover 스타일은 AppShell의 <style>에 있다(💰 영향 뉴스 카드와 공유).
+const column = {
+  maxWidth: 640, margin: "0 auto", display: "flex", flexDirection: "column", gap: 10, color: C.text,
 };
 const collectBtn = {
-  padding: "6px 10px", borderRadius: 10, border: `1px solid ${C.border}`,
+  flex: "0 0 auto", padding: "5px 9px", borderRadius: 10, border: `1px solid ${C.border}`,
   background: "#fff", color: C.sub, fontSize: 12, fontWeight: 600, cursor: "pointer",
   boxShadow: "0 1px 2px rgba(15,23,42,0.04)", transition: TRANSITION,
 };
-const title = { margin: "4px 0 0", fontSize: 22, fontWeight: 800, letterSpacing: "-0.02em" };
-const subtitle = { fontSize: 12, color: C.muted };
-const noticeText = { color: C.blue, fontWeight: 600 };
+const noticeText = { fontSize: 12, color: C.blue, fontWeight: 600 };
+// ⚠️ 칩 줄은 탭 머리(56px) 바로 아래에 붙는다 — 예전엔 브리핑 카드들 아래 한참 밑에 있어 찾기 어려웠다.
+//    sticky라 배경을 패널과 같은 색으로 칠해야 스크롤되는 기사가 비치지 않는다.
 const chipRow = {
-  display: "flex", gap: 6, overflowX: "auto", padding: "4px 0 6px",
-  WebkitOverflowScrolling: "touch",
+  display: "flex", gap: 6, overflowX: "auto", WebkitOverflowScrolling: "touch",
+  position: "sticky", top: 56, zIndex: 1, background: "#f8fafc",
+  margin: "0 -14px", padding: "4px 14px 6px",
 };
 const chip = {
   flex: "0 0 auto", padding: "6px 11px", borderRadius: 999,

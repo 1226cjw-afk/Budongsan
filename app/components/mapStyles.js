@@ -7,7 +7,10 @@ import { C, PANEL_SHADOW, GLASS, GLASS_BORDER, TRANSITION } from "../lib/palette
 
 // 레이어 순서 — 모바일에서 패널이 겹치던 원인이 z-index 중복(전부 10)이었다.
 // 새 오버레이를 추가할 땐 반드시 여기에 등록할 것.
-export const Z = { MAP: 0, TOPBAR: 20, BACKDROP: 30, SHEET: 31, MODAL: 50 };
+// PANEL = 오늘·뉴스 탭 패널(지도·시트를 덮는다) / TABBAR = 모바일 하단 탭바(패널 위, 모달 아래).
+export const Z = { MAP: 0, TOPBAR: 20, BACKDROP: 30, SHEET: 31, PANEL: 40, TABBAR: 45, MODAL: 50 };
+// 모바일 하단 탭바 높이(px, safe-area 제외). 시트·패널·📍 버튼이 이 위에 앉는다.
+export const TABBAR_H = 56;
 
 export const controlPanel = {
   position: "absolute", top: 14, left: 14, zIndex: Z.TOPBAR,
@@ -16,15 +19,6 @@ export const controlPanel = {
   fontSize: 13, display: "flex", flexDirection: "column", gap: 9, width: 300,
 };
 export const panelTitle = { fontSize: 13, fontWeight: 700, color: C.text, letterSpacing: "-0.01em" };
-export const newsTabLink = {
-  fontSize: 11, fontWeight: 600, color: C.blue, textDecoration: "none",
-  padding: "3px 9px", background: C.blueSoft, borderRadius: 999, transition: TRANSITION,
-};
-// 브리핑 미확인 개수 — 뉴스 링크에 붙는다.
-export const newsBadge = {
-  marginLeft: 4, padding: "0 5px", borderRadius: 999,
-  background: C.blue, color: "#fff", fontSize: 10, fontWeight: 700,
-};
 export const detailPanel = {
   position: "absolute", top: 14, right: 14, bottom: 14, zIndex: Z.TOPBAR, width: 320,
   overflowY: "auto", ...GLASS, background: "rgba(255,255,255,0.94)", padding: "18px 20px",
@@ -186,13 +180,15 @@ export const sheetBackdrop = {
   background: "rgba(15,23,42,0.28)",
 };
 export const mobileSheet = {
-  position: "absolute", left: 0, right: 0, bottom: 0, zIndex: Z.SHEET,
+  // ⚠️ bottom = 탭바 높이 — 0이면 설정 시트 아랫단이 하단 탭바(Z.TABBAR)에 가려진다.
+  position: "absolute", left: 0, right: 0,
+  bottom: `calc(${TABBAR_H}px + env(safe-area-inset-bottom))`, zIndex: Z.SHEET,
   // ⚠️ boxSizing 필수 — globals.css에 border-box 전역 리셋이 없어서 기본값이 content-box다.
   // 없으면 maxHeight가 패딩(상10+하16=26px)을 제외해 시트가 70vh를 26px 넘긴다(2026-07-25 실측).
   boxSizing: "border-box",
   maxHeight: "70vh", display: "flex", flexDirection: "column", gap: 8,
   ...GLASS, background: "rgba(255,255,255,0.97)", borderRadius: "20px 20px 0 0",
-  padding: "10px 14px calc(16px + env(safe-area-inset-bottom))",
+  padding: "10px 14px 16px", // safe-area는 탭바가 먹는다
   boxShadow: "0 -1px 2px rgba(15,23,42,0.04), 0 -8px 32px rgba(15,23,42,0.16)",
   overflowY: "auto",
 };
@@ -354,3 +350,57 @@ export const modalCard = {
 export const helpBlock = { marginTop: 14 };
 export const helpHead = { fontSize: 13, fontWeight: 700, color: C.blue, marginBottom: 4 };
 export const helpBody = { fontSize: 12.5, color: C.text, lineHeight: 1.7 };
+
+// ── 탭 셸 (AppShell · TabBar · TodayView · NewsList) ──────────────────────
+export const tabBar = {
+  position: "fixed", left: 0, right: 0, bottom: 0, zIndex: Z.TABBAR,
+  height: `calc(${TABBAR_H}px + env(safe-area-inset-bottom))`,
+  paddingBottom: "env(safe-area-inset-bottom)", boxSizing: "border-box",
+  display: "flex", ...GLASS, background: "rgba(255,255,255,0.96)",
+  borderTop: `1px solid ${C.border}`,
+};
+export const tabItem = {
+  flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+  gap: 2, fontSize: 10.5, fontWeight: 700, color: C.muted, textDecoration: "none", position: "relative",
+};
+export const tabItemOn = { color: C.blue };
+export const tabIcon = { fontSize: 19, lineHeight: 1 };
+export const tabDot = {
+  position: "absolute", top: 6, left: "calc(50% + 8px)", minWidth: 16, height: 16, padding: "0 4px",
+  borderRadius: 999, background: C.red, color: "#fff", fontSize: 10, fontWeight: 800,
+  display: "flex", alignItems: "center", justifyContent: "center", boxSizing: "border-box",
+};
+// 오늘·뉴스 패널. ⚠️ 숨김은 visibility(스크롤 위치 보존) — display:none은 스크롤을 잃는다.
+export const tabPanelMobile = {
+  position: "fixed", top: 0, left: 0, right: 0,
+  bottom: `calc(${TABBAR_H}px + env(safe-area-inset-bottom))`, zIndex: Z.PANEL,
+  overflowY: "auto", background: "#f8fafc",
+  padding: "0 14px 24px", boxSizing: "border-box",
+};
+// 데스크톱: 좌측 컨트롤 패널(340) 자리를 440으로 넓혀 덮는다 — 우측 세부패널과 지도는 그대로 보인다.
+export const tabPanelDesktop = {
+  position: "absolute", top: 14, left: 14, bottom: 14, width: 440, zIndex: Z.PANEL,
+  overflowY: "auto", background: "#f8fafc", borderRadius: 18,
+  boxShadow: PANEL_SHADOW, border: GLASS_BORDER, padding: "0 14px 18px", boxSizing: "border-box",
+};
+// 탭 머리 — 56px(모바일 상단 바와 같은 높이)로 고정해 탭을 넘나들어도 상단 기준선이 안 흔들린다.
+// ⚠️ sticky라 배경을 칠해야 스크롤되는 카드가 머리 뒤로 비치지 않는다(패널 배경과 같은 색).
+export const tabHeader = {
+  position: "sticky", top: 0, zIndex: 2, height: 56, boxSizing: "border-box",
+  display: "flex", alignItems: "center", gap: 8,
+  background: "#f8fafc", margin: "0 -14px", padding: "0 14px",
+};
+export const tabHeaderTitle = {
+  fontSize: 18, fontWeight: 800, letterSpacing: "-0.02em", color: C.text, whiteSpace: "nowrap",
+};
+export const tabHeaderSub = {
+  flex: 1, minWidth: 0, fontSize: 11, color: C.muted,
+  whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+};
+// 데스크톱 [지도 | 오늘 | 뉴스] 세그먼트.
+export const segWrap = { display: "flex", gap: 2, padding: 2, borderRadius: 10, background: C.divider, flex: "0 0 auto" };
+export const segBtn = {
+  position: "relative", padding: "4px 9px", borderRadius: 8, fontSize: 11.5, fontWeight: 700,
+  color: C.sub, textDecoration: "none", whiteSpace: "nowrap",
+};
+export const segBtnOn = { background: "#fff", color: C.text, boxShadow: "0 1px 2px rgba(15,23,42,0.08)" };

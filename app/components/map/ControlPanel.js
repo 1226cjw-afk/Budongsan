@@ -11,15 +11,16 @@ import { C } from "../../lib/palette";
 import { formatAgo } from "../../lib/format";
 import { AREA_FILTERS, PRICE_FILTERS, MONTHLY_FILTERS } from "../../lib/mapFilters";
 import {
-  panelTitle, newsTabLink, newsBadge, selectStyle, pillBtn, pillBtnOn,
+  panelTitle, selectStyle, pillBtn, pillBtnOn,
   statusText, refreshBtn, hintLine, legendRow, legendItem, legendDot,
   migrateNotice, linkBtn,
 } from "../mapStyles";
 import ProfileDrawer from "./ProfileDrawer";
 import FavoriteDrawer from "./FavoriteDrawer";
+import { TabSwitcher } from "../TabBar";
 
 export default function ControlPanel({
-  isMobile, newsNew, loading, status, lastUpdated,
+  isMobile, loading, status, lastUpdated,
   lawdCd, onSelectRegion, onRefresh,
   area, setArea, price, setPrice, monthly, setMonthly,
   affordMode, hasProfile, assets, priceBasis,
@@ -31,11 +32,10 @@ export default function ControlPanel({
   return (
     <>
       {!isMobile && (
-        <div style={{ ...panelTitle, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <span>🏠 실거래 · 대출 비교</span>
-          <a href="/news" style={newsTabLink}>
-            📰 뉴스{newsNew > 0 && <span style={newsBadge}>{newsNew}</span>}
-          </a>
+        <div style={{ ...panelTitle, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+          <span>🏠 실거래 · 대출</span>
+          {/* 데스크톱 탭 전환 — 예전 "📰 뉴스" <a href> 링크(전체 새로고침)를 대신한다 */}
+          <TabSwitcher />
         </div>
       )}
 

@@ -6,7 +6,8 @@ import { loanCalcFor, isRegulated } from "../lib/loanPolicy";
 import { C } from "../lib/palette";
 import { kstDate, formatManwon } from "../lib/format";
 import { favKey, distMeters, summarize, groupByPyeong } from "../lib/tradeStats";
-import { countNew } from "../lib/briefingSeen";
+import useIsMobile from "./useIsMobile";
+import { PROFILE_EVENT } from "./useLoanProfile";
 import {
   AREA_FILTERS, PRICE_FILTERS, MONTHLY_FILTERS, bandFor,
   HOT_PCT, SORT_OPTIONS, SORT_GAP, matchesComplexName,
@@ -140,8 +141,7 @@ export default function KakaoMap() {
   const [priceBasis, setPriceBasis] = useState("recent"); // recent | avg
   const [showCost, setShowCost] = useState(null); // 부대비용 내역 펼친 평형(m2) | null
   const [showCostNotice, setShowCostNotice] = useState(false);
-  const [isMobile, setIsMobile] = useState(false); // 좁은 화면 → 패널을 시트/상단바로
-  const [newsNew, setNewsNew] = useState(0); // 브리핑 미확인 단지 수 (📰 배지)
+  const isMobile = useIsMobile(); // 좁은 화면 → 패널을 시트/상단바로
   const [excluded, setExcluded] = useState(null); // {cancelled, direct} 시세에서 뺀 거래 수
   const [regionToast, setRegionToast] = useState(null); // 자동 지역 전환 알림 {from, to}
   const [myLoc, setMyLoc] = useState(null); // 현위치 {lat, lng}
@@ -160,14 +160,6 @@ export default function KakaoMap() {
 
   const [favEdit, setFavEdit] = useState(null); // 즐겨찾기 D-day 인라인 편집 {id, leaseEnd, note, noteDate}
   const [favDdayErr, setFavDdayErr] = useState("");
-
-  useEffect(() => {
-    const mq = window.matchMedia("(max-width: 640px)");
-    const update = () => setIsMobile(mq.matches);
-    update();
-    mq.addEventListener("change", update);
-    return () => mq.removeEventListener("change", update);
-  }, []);
 
   const regionLabel = useMemo(() => regionName(lawdCd), [lawdCd]);
   const favSet = useMemo(
@@ -455,19 +447,6 @@ export default function KakaoMap() {
     loadFavorites();
   }, []);
 
-  // 브리핑 미확인 개수 — 📰 배지용. 캐시 전용 라우트라 가볍고, 실패하면 배지만 생략한다.
-  // ready 이후에 걸어 지도 초기 로드를 지연시키지 않는다.
-  useEffect(() => {
-    if (!ready) return;
-    let alive = true;
-    fetch("/api/briefing")
-      .then((r) => r.json())
-      .then((d) => alive && setNewsNew(countNew(d.complexes)))
-      .catch(() => {});
-    return () => {
-      alive = false;
-    };
-  }, [ready]);
 
   // 내 자금 프로필 복원(로컬 저장).
   useEffect(() => {
@@ -510,6 +489,12 @@ export default function KakaoMap() {
       return next;
     });
   }
+
+  // 오늘·뉴스 탭(keep-alive)이 자금 변경을 따라오게 알린다 — useLoanProfile 주석 참조.
+  // ⚠️ setProfile 업데이터 안에서 쏘지 말 것(렌더 중 다른 컴포넌트 setState 경고) → effect로.
+  useEffect(() => {
+    window.dispatchEvent(new Event(PROFILE_EVENT));
+  }, [profile]);
 
   // 갈아타기: 세부패널 평형 카드에서 보유 주택 지정/해제. 같은 평형 재클릭 = 해제,
   // 이미 보유 지정된 상태에서 다시 지정 = 최신 기준가로 스냅샷 갱신.
@@ -999,7 +984,6 @@ export default function KakaoMap() {
   const controlPanelContent = (
     <ControlPanel
       isMobile={isMobile}
-      newsNew={newsNew}
       loading={loading}
       status={status}
       lastUpdated={lastUpdated}
@@ -1131,7 +1115,6 @@ export default function KakaoMap() {
             onOpenSettings={() => setSheet("settings")}
             onRefresh={() => loadTrades(lawdCd, { refresh: true })}
             refreshing={loading}
-            newsNew={newsNew}
           />
           <MobileSheet
             open={sheet != null}
