@@ -50,10 +50,15 @@
 ### 1부 — 이동 구조 (폰 우선)
 
 **셸: 지도가 한 번만 뜨고 살아 있다**
-- `app/(main)/layout.js`가 `KakaoMap` + 탭바를 소유한다. 페이지:
-  - `app/(main)/page.js` → 지도 탭(`null` 렌더 — 지도는 레이아웃에 있음)
-  - `app/(main)/news/page.js` → 🔥 오늘 탭(브리핑 + 핫플) — **기존 `/news` 북마크 유지**
-  - `app/(main)/news/list/page.js` → 📰 뉴스 탭(기사 목록)
+- `app/(main)/layout.js`가 `AppShell`(= `KakaoMap` + 탭 패널 + 탭바)을 소유한다. 페이지 셋은
+  **URL만 제공하고 전부 `null`을 렌더**한다 — 화면은 셸이 `usePathname()`으로 골라 그린다:
+  - `/` → 🗺 지도 탭
+  - `/news` → 🔥 오늘 탭(브리핑 + 핫플) — **기존 `/news` 북마크 유지**
+  - `/news/list` → 📰 뉴스 탭(기사 목록)
+- 오늘·뉴스 화면은 **한 번 열리면 셸이 계속 마운트해 둔다**(숨김만). 페이지 컴포넌트로 두면 탭을
+  떠날 때마다 언마운트돼 돌아올 때 `/api/briefing`을 다시 부르고 스크롤이 맨 위로 튄다.
+  숨김은 `visibility`로(`display:none`은 스크롤 위치를 잃는다).
+- `/api/news`는 셸이 **한 번만** 받아 두 탭이 공유한다(오늘 탭의 📢 뉴스 칩 + 뉴스 탭 목록).
 - App Router는 형제 라우트 사이 이동에서 레이아웃을 리마운트하지 않는다 → 탭 전환에도
   지도 SDK·`tradesData`·`selected`·마커 DOM이 그대로다. 이동은 전부 `next/link`/`router.push`.
 - 오늘·뉴스 탭은 지도 위 **전체 화면 패널**(모바일) / **좌측 440px 패널**(데스크톱).
@@ -74,22 +79,25 @@
   `detail=false`(목록으로 복귀, 스크롤 위치 보존). `✕` → 상세 닫고 목록 `peek`.
 - **뒤로가기 제스처**: 상세 열 때 `history.pushState({detail:1}, "")`, `popstate`에서 상세 닫기.
   설정 시트도 같은 방식. (Next 16 App Router는 `window.history.pushState` 통합을 지원)
-- **선택 단지를 보이는 영역 중앙으로**: 기존 `moveMap(fn)` 안에서 `setCenter(latlng)` 후
-  시트 높이의 절반만큼 `panBy(0, h/2)`. ⚠️ `panTo`(애니메이션) + `fitRef=true` 조합 금지 규칙 준수.
+- **선택 단지를 보이는 영역 중앙으로**: 기존 `selectComplex`의 `moveMap(() => panTo(…))`를 유지하되,
+  모바일이면 목표점을 `map.getProjection()`으로 **핀보다 `innerHeight/4`px 아래** 좌표로 바꿔 panTo한다
+  (= 핀이 상단 바와 half 시트 사이 빈 영역의 가운데에 온다). `selectComplex`는 이미 `fitRef=false`를
+  먼저 걸어 `panTo`+`fitRef` 경합 금지 규칙을 지킨다.
 - ⚙️ 설정 시트(지역·필터·자금·★ 서랍)는 지금처럼 백드롭 있는 모달 시트. 안의 "📋 단지 목록 보기"
   버튼은 제거(목록이 늘 떠 있으므로). 상단 바의 📰는 제거(탭바로 이동).
 - 📍 현위치 버튼은 목록 `peek` 위에 붙는다(시트 높이 추종). `half`/`full`/설정일 땐 숨김.
 
-**데스크톱 지도 탭**: 현행 유지(좌 컨트롤+리스트 / 우 상세). 추가: 단지 선택 시 지도 중앙 이동
-(우측 상세 폭만큼 `panBy(160, 0)` 보정).
+**데스크톱 지도 탭**: 현행 유지(좌 컨트롤+리스트 / 우 상세). 단지 선택 시 이미 `panTo`로 중앙 이동한다 —
+좌(14+340)·우(14+320) 패널 폭이 거의 같아 빈 지도 영역의 중심 ≈ 화면 중심이므로 보정하지 않는다.
 
 **단지로 보내기 — `focusComplex`**
 - 레이아웃이 Context로 `focusComplex({ lawdCd, aptNm })`를 제공한다. 오늘 탭의 핫플·관심 단지·
   새 거래 피드 행이 이걸 부른다.
 - 동작: 다른 지역이면 기존 **`selectRegion` 경로**로 전환(stale 가드·idle 억제·`regionToast` 끔을
   그대로 탄다) → 데이터 도착 후 `matchesComplexName`으로 행을 찾아 **정확히 1곳이면 자동 선택**,
-  여러 곳이면 `nameQuery`에 넣어 목록을 `half`로 연다. (현행 딥링크는 `nameQuery`만 채우고
-  자동 선택은 없다 — 1곳 자동 선택은 **신규 동작**이며 콜드 딥링크에도 같이 적용한다.)
+  여러 곳이면 `nameQuery`에 넣어 목록을 `half`로 연다. 1곳 자동 선택은 딥링크가 이미 쓰는
+  `pendingPickRef` 경로를 **그대로 재사용**한다(새 로직 없음). 같은 지역이면 데이터 재로드가 없어
+  `listRows`가 안 바뀔 수 있으므로 `dataRef`에서 바로 찾아 선택한다.
 - 모바일: `router.push("/")`로 지도 탭 전환 + 위 동작. 데스크톱: 탭은 그대로 두고 지도·우측 상세만.
 - 콜드 로드용 `/?lawdCd=&q=` 딥링크 경로는 **그대로 둔다**(부트스트랩 effect). ⚠️ 레이아웃이
   유지되므로 `location.search`는 마운트 때 한 번만 읽힌다 — 앱 안 이동은 반드시 `focusComplex`로.
@@ -132,6 +140,8 @@ create table trade_reports (
   umd_nm text, apt_nm text,
   area numeric, amount integer, floor text,
   dealing_gbn text, cdeal_type text,
+  ref_median integer,               -- 가격 비교 기준(아래 3-3). 기록 시점에 계산
+  ref_n smallint,
   primary key (lawd_cd, trade_key)
 );
 create index on trade_reports (reported_on);
@@ -153,20 +163,23 @@ create index on trade_reports (reported_on);
 **3-2. 전역 수집 (`/api/cron/refresh`)**
 - 순서: ★ 지역 재수집 → **전역 수집(신규)** → 브리핑 워밍 → 추세 워밍(양보 가능, 맨 뒤 유지).
 - 대상: `regions.js` 전 지역(≈72) − 이미 방금 갱신한 ★ 지역, × 이번 달·지난달 `{ refresh: true }`.
-  동시 24 청크, **데드라인 25s**. 미완주 지역은 응답 `hotCollect.skipped`에 이름을 남긴다.
+  지역 12곳씩 청크(= 국토부 동시 24호출), 캐시가 **가장 오래된 지역부터**, **데드라인 25s**. 미완주 지역은 응답 `hotCollect.skipped`에 이름을 남긴다.
 - 새 cron 없음(Hobby 2개 한도).
 - ⚠️ 첫 며칠은 전역 첫 수집(= 기준선)이 무거워 추세 워밍이 데드라인에 밀릴 수 있다 — 원래
   이어받기로 설계된 작업이라 허용.
 
-**3-3. `/api/hot?window=today|week`**
-- `trade_reports`에서 `reported_on >= (today | kstDate()−6일)`, 해제(`cdeal_type='O'`)·직거래 제외.
-- 단지(`lawd_cd|umd_nm|apt_nm`)별 `reports` 집계.
-- 가격 신호: 새 거래마다 **같은 단지·같은 평형**(`toPyeong` 동일)의 직전 3개월 거래(`fetchRawMonths`,
-  `cacheOnly`) **중앙값** 대비 `pct`. 비교 거래 없으면 null. 단지 대표값 = 최대 `pct`와 그 평형·금액.
+**3-3. `/api/hot`** (한 번 호출로 `today`·`week` 둘 다 반환 — 세그먼트 전환에 재요청 없음)
+- `trade_reports`에서 `reported_on >= kstDate()−6일`을 읽고(페이지네이션 — PostgREST 기본 1,000행 컷),
+  해제(`cdeal_type='O'`)·직거래 제외 후 단지(`lawd_cd|umd_nm|apt_nm`)별 `reports` 집계. `today`는
+  같은 행에서 `reported_on = kstDate()`만.
+- **가격 기준은 기록 시점에 계산해 `ref_median`에 저장한다**: 같은 수집 창(보통 이번 달+지난달)에서
+  **같은 단지·같은 평형**(`toPyeong` 동일)·계약일이 더 이른 정상 거래의 **중앙값**. 비교 거래가 없으면 null.
+  읽을 때는 `pct = (amount − ref_median) / ref_median`만 계산한다 → `/api/hot`이 캐시를 읽지 않는다
+  (요청마다 수십 개 지역 캐시를 읽으면 수 MB).
+  단지 대표값 = 최대 `pct`와 그 평형·금액.
   '신고가'는 표시하지 않는다(지역마다 캐시 깊이 2~39개월로 달라 "최고가"가 거짓말이 된다).
-- 응답: 상위 30단지(`reports` 순) + 가격 상위 보강분, `window`·`asOf` 포함.
-  캐시는 상위 단지가 속한 지역만 읽는다.
-- 순수 계산은 `lib/hotRank.js`(`summarizeReports`, `priceJump`)로 빼서 테스트한다.
+- 응답: 창별 상위 60단지(`reports` 순) ∪ 가격 후보(`reports ≥ 2`·`pct > 0`) 상위 20, `asOf` 포함.
+- 순수 계산은 `lib/hotRank.js`(`summarizeReports`)·`lib/tradeReports.js`(`refMedianFor`)로 빼서 테스트한다.
 
 **3-4. 점수 (클라이언트, `lib/hotRank.js`의 `rankHot`)**
 - 뉴스: 클라이언트가 이미 가진 `buildNewsWatch(news)` — 추가 요청 없음.
@@ -189,8 +202,12 @@ create index on trade_reports (reported_on);
 
 | 파일 | 변경 |
 |---|---|
-| `app/(main)/layout.js` · `page.js` · `news/page.js` · `news/list/page.js` | 신규(라우트 그룹 셸). 기존 `app/page.js`·`app/news/page.js`는 이동 |
-| `components/AppShell.js` | 신규 — 탭바·데스크톱 세그먼트·`focusComplex` Context |
+| `app/(main)/layout.js` · `page.js` · `news/page.js` · `news/list/page.js` | 신규(라우트 그룹 셸, 페이지는 `null`). 기존 `app/page.js`·`app/news/page.js` 삭제 |
+| `components/AppShell.js` | 신규 — 탭 판정·keep-alive 패널·`focusComplex` Context·뉴스 1회 fetch·배지 |
+| `components/TabBar.js` | 신규 — 모바일 하단 탭바 + 데스크톱 세그먼트(`TabSwitcher`) |
+| `components/TodayView.js` | 신규 — 🔥 오늘 탭(머리 + `Briefing`) |
+| `components/useIsMobile.js` | 신규 — matchMedia 640px 훅(KakaoMap·AppShell 공용) |
+| `components/map/MapSheet.js` | 신규 — 모바일 목록/상세 스택 시트(peek/half/full) |
 | `components/MobileShell.js` | 상단 바에서 📰 제거, 시트를 스택형(peek/half/full + 상세 머리)으로 |
 | `components/KakaoMap.js` | `sheet` 상태 분해, 선택 시 중앙 이동, `focusComplex` 수신, 탭 복귀 `relayout` |
 | `components/Briefing.js` | `/api/hot` 동시 fetch, 카드 순서, 📢·💰 제거 |
