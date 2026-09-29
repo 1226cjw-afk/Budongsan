@@ -45,6 +45,16 @@ export function shouldRecord(prev, nowMs = Date.now()) {
   return Number.isFinite(age) && age <= RECORD_MAX_AGE_MS;
 }
 
+// 하루 새 신고로는 있을 수 없는 규모인가(= 이전 payload가 비정상이었다). 기록하지 않고 로그만 남긴다.
+// ⚠️ 이전 달이 오류 본문 때문에 []로 캐시돼 있으면(rtms.js 주석) shouldRecord는 통과하지만 다음 정상
+//    수집에서 그 달 전체가 새 거래가 된다 — 핫플 1위를 7일 동안 먹는다(2026-09-29 리뷰 지적).
+// 임계값은 보수적 근사: 큰 구(송파)의 한 달 누적이 수백 건이고 하루 새 신고는 수십 건 이하 —
+// "새 것이 30건 넘고 새 payload의 절반 초과" 또는 "빈 달에서 20건 이상"은 누적분이 한꺼번에 들어온 것.
+export function looksLikeFlood({ prevCount, freshCount, newCount }) {
+  if (prevCount === 0 && freshCount >= 20) return true;
+  return freshCount > 30 && freshCount > newCount / 2;
+}
+
 const isNormal = (p) => p.cdealType !== "O" && p.dealingGbn !== "직거래";
 
 // 가격 비교 기준 — 같은 단지·같은 평형(공급 기준 평)·계약일이 더 이른 **정상 거래**의 중앙값.

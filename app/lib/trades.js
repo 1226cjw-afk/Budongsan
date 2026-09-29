@@ -6,7 +6,8 @@ import { supabaseAdmin } from "./supabaseServer";
 import { regionPrefix, regionToken } from "./regions";
 import { excludeAbnormal } from "./tradeStats";
 import { kstDate } from "./format";
-import { diffNewTrades, shouldRecord, buildReportRows } from "./tradeReports";
+import { diffNewTrades, shouldRecord, buildReportRows, looksLikeFlood } from "./tradeReports";
+import { rtmsResponseError, fetchWithTimeout } from "./rtms";
 
 const RTMS_ENDPOINT =
   "http://apis.data.go.kr/1613000/RTMSDataSvcAptTrade/getRTMSDataSvcAptTrade";
@@ -124,16 +125,14 @@ async function fetchMonthFromApi(lawdCd, ymd) {
   const url =
     `${RTMS_ENDPOINT}?serviceKey=${encodeURIComponent(dataKey)}` +
     `&LAWD_CD=${lawdCd}&DEAL_YMD=${ymd}&numOfRows=1000&pageNo=1`;
-  const res = await fetch(url, {
+  // ⚠️ 판정·타임아웃은 lib/rtms.js — 오류 본문을 빈 달로 통과시키면 🔥 핫플이 오염된다(그 파일 주석).
+  const res = await fetchWithTimeout(fetch, url, {
     headers: { "User-Agent": "Budongsan/0.1" },
     cache: "no-store",
   });
   const xml = await res.text();
-  const code = (xml.match(/<resultCode>([^<]*)<\/resultCode>/) || [])[1];
-  if (code && code !== "00" && code !== "000") {
-    const msg = (xml.match(/<resultMsg>([^<]*)<\/resultMsg>/) || [])[1] || "unknown";
-    throw new Error(`국토부 API 오류 ${code}: ${msg}`);
-  }
+  const err = rtmsResponseError(res.status, xml);
+  if (err) throw new Error(err);
   return parseTrades(xml).filter((t) => t.dealAmount < MAX_AMOUNT);
 }
 
@@ -164,6 +163,11 @@ async function recordReports(lawdCd, okRows) {
       const prev = prevBy.get(r.deal_ymd);
       if (!shouldRecord(prev)) continue;
       const fresh = diffNewTrades(prev.trades, r.trades);
+      const counts = { prevCount: prev.trades.length, freshCount: fresh.length, newCount: r.trades.length };
+      if (looksLikeFlood(counts)) {
+        console.warn("[trade_reports] 홍수 의심 — 기록 건너뜀", lawdCd, r.deal_ymd, counts);
+        continue;
+      }
       rows.push(...buildReportRows({ lawdCd, reportedOn, fresh, pool }));
     }
     if (rows.length) {

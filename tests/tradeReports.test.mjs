@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   tradeKey, keyedTrades, diffNewTrades, shouldRecord, refMedianFor, buildReportRows,
-  RECORD_MAX_AGE_MS,
+  RECORD_MAX_AGE_MS, looksLikeFlood,
 } from "../app/lib/tradeReports.js";
 
 // 🔥 핫플의 "오늘/이번 주"는 계약일이 아니라 **우리 데이터에 처음 나타난 날**이다.
@@ -87,4 +87,17 @@ test("buildReportRows는 trade_reports 컬럼으로 옮기고 해제·직거래�
     umd_nm: "구로동", apt_nm: "구로두산", area: 84.97, amount: 71000, floor: 7,
     dealing_gbn: "직거래", cdeal_type: null, ref_median: null, ref_n: 0,
   });
+});
+
+// ── 홍수 가드(2026-09-29 리뷰) ── 이전 payload가 비었거나 크게 쪼그라든 상태(오류 본문이 빈 달로 캐시된 경우
+// 등)에서 정상 수집이 오면 그 달 전체가 "오늘 신고"로 쏟아진다. 하루 새 신고로는 있을 수 없는 규모를 거른다.
+test("이전이 빈 달인데 새로 20건 이상이면 홍수로 본다", () => {
+  assert.equal(looksLikeFlood({ prevCount: 0, freshCount: 20, newCount: 20 }), true);
+  assert.equal(looksLikeFlood({ prevCount: 0, freshCount: 19, newCount: 19 }), false); // 월초 정상 유입
+});
+
+test("새 거래가 30건 넘고 새 payload의 절반을 넘으면 홍수로 본다", () => {
+  assert.equal(looksLikeFlood({ prevCount: 40, freshCount: 45, newCount: 85 }), true);
+  assert.equal(looksLikeFlood({ prevCount: 200, freshCount: 45, newCount: 245 }), false); // 큰 구의 하루치
+  assert.equal(looksLikeFlood({ prevCount: 10, freshCount: 12, newCount: 22 }), false);  // 절반 넘지만 소량
 });
