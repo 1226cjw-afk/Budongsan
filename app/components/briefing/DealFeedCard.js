@@ -16,12 +16,12 @@ import { regionName } from "../../lib/regions";
 import { C } from "../../lib/palette";
 import {
   card, cardHead, headSub, row, rowDivider, rowTop, rowName, rowPrice, rowMeta,
-  rowBadges, okTag, noTag, upTag, downTag,
+  rowBadges, okTag, noTag, upTag, downTag, rowBtn,
 } from "./styles";
 
 const MAX_ROWS = 12;
 
-export default function DealFeedCard({ feed, favorites, profile, assets, hasIncome }) {
+export default function DealFeedCard({ feed, favorites, profile, assets, hasIncome, onFocus }) {
   const [tab, setTab] = useState("fav");
 
   // 자금 여유 계산은 지도·관심단지·청약 카드와 **같은 어댑터**(loanCalcFor)를 쓴다 —
@@ -81,9 +81,10 @@ export default function DealFeedCard({ feed, favorites, profile, assets, hasInco
           rows.map((t, i) => {
             const chg = t.prevAmount ? ((t.amount - t.prevAmount) / t.prevAmount) * 100 : null;
             return (
-              <div
+              <button
                 key={`${t.lawdCd}-${t.umdNm}-${t.aptNm}-${t.dealDate}-${t.amount}-${i}`}
-                style={{ ...row, ...(i > 0 ? rowDivider : null) }}
+                onClick={() => onFocus?.({ lawdCd: t.lawdCd, aptNm: t.aptNm })}
+                style={{ ...row, ...rowBtn, ...(i > 0 ? rowDivider : null) }}
               >
                 <div style={rowTop}>
                   <span style={rowName}>{t.aptNm}</span>
@@ -106,7 +107,7 @@ export default function DealFeedCard({ feed, favorites, profile, assets, hasInco
                     </span>
                   )}
                 </div>
-              </div>
+              </button>
             );
           })
         )}

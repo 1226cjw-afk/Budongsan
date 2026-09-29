@@ -34,3 +34,8 @@ export const emptyHint = {
   boxShadow: CARD_SHADOW, padding: "14px 16px",
   fontSize: 12.5, color: C.sub, lineHeight: 1.6,
 };
+// 행 전체가 "지도에서 보기" 버튼인 카드(🔥 핫플 · ⭐ 관심 단지 · 🆕 새 거래)용 — 버튼 기본 모양을 벗긴다.
+export const rowBtn = {
+  width: "100%", textAlign: "left", background: "none", border: "none", cursor: "pointer",
+  font: "inherit", color: "inherit",
+};

@@ -155,7 +155,8 @@ export default function KakaoMap() {
   const [sortBy, setSortBy] = useState("yoy");
   const [onlyBuyable, setOnlyBuyable] = useState(false); // 구매가능 단지만 (자금 설정 시)
   const [nameQuery, setNameQuery] = useState(""); // 리스트 이름 검색(딥링크 q로도 채워진다)
-  const pendingPickRef = useRef(false); // 딥링크 착지 후 결과가 1곳이면 자동 선택(1회성)
+  // 딥링크·🔥 오늘 탭 착지 후 결과가 1곳이면 자동 선택(1회성). 값 = 착지할 지역 코드 | null.
+  const pendingPickRef = useRef(null);
 
   // 모바일 시트: 지도 시트(목록 peek/half/full + 상세 스택)와 ⚙️ 설정 시트(모달). 둘은 동시에 렌더되지 않는다.
   const [listSnap, setListSnap] = useState("peek");
@@ -353,7 +354,7 @@ export default function KakaoMap() {
       setLawdCd(link.lawdCd);
       if (link.q) {
         setNameQuery(link.q);
-        pendingPickRef.current = true;
+        pendingPickRef.current = link.lawdCd;
         setListSnap("half"); // 모바일: 목록 시트를 펴서 착지 결과를 바로 보여준다
       }
       // 주소창을 정리한다 — 안 지우면 사용자가 지도를 옮긴 뒤 새로고침할 때마다
@@ -769,8 +770,12 @@ export default function KakaoMap() {
   // ⚠️ 한 번만 소비하는 ref다. 사용자가 검색창에 타이핑하다 우연히 1곳이 될 때마다
   //    패널이 튀어나오면 방해가 된다 — 자동 선택은 링크로 들어온 그 순간만이다.
   useEffect(() => {
-    if (!pendingPickRef.current || !listRows) return;
-    pendingPickRef.current = false;
+    // ⚠️ **착지 지역의 데이터**로 만든 목록에서만 소비한다. 검색어(nameQuery)는 지역 전환보다 먼저
+    //    바뀌므로, 그냥 소비하면 **이전 지역** 목록(0곳)에서 기회를 써 버려 착지 후 자동 선택이 안 된다
+    //    (2026-09-29 실측: 🔥 핫플 → 강남구 착지, 상세 안 열림). 콜드 딥링크는 그때 데이터가 없어서
+    //    드러나지 않았다.
+    if (!pendingPickRef.current || !listRows || tradesData?.lawdCd !== pendingPickRef.current) return;
+    pendingPickRef.current = null;
     if (listRows.length === 1) selectComplex(listRows[0].c);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [listRows]);
@@ -996,7 +1001,7 @@ export default function KakaoMap() {
       else setListSnap("half");
       return;
     }
-    pendingPickRef.current = !!q;
+    pendingPickRef.current = q ? code : null;
     setListSnap("half");
     selectRegion(code);
   }

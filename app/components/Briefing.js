@@ -1,28 +1,29 @@
 "use client";
 
-// 📋 오늘의 브리핑 — 뉴스 페이지 상단 카드 묶음의 컨테이너.
+// 📋 오늘의 브리핑 — 🔥 오늘 탭 카드 묶음의 컨테이너.
 // 데이터 조달(fetch·localStorage)과 빈 상태 판정만 여기서 하고, 렌더는 briefing/ 아래 카드들이 한다.
 // ⚠️ 카드를 더 얹을 땐 이 파일에 JSX를 쌓지 말고 briefing/에 파일을 추가할 것 —
 //    KakaoMap.js가 1263→1751줄로 되자란 전철을 피하려는 분리다(2026-08-03).
 // ⚠️ 카드가 쓸 데이터의 fetch도 **반드시 여기서** 시작할 것. 카드 안에서 fetch하면 그 카드는
 //    아래 로딩 게이트(data === null) 뒤에야 마운트돼, 서로 무관한 요청이 직렬화된다(2026-08-05).
+// 2026-09-29 재배치: 매일 볼 것(🔥 핫플·⭐ 관심 단지·⏳ 일정·🆕 새 거래)을 위로, 가끔 볼 것(📊 신호 —
+// 요약 행으로 접힘·🏗 청약)을 아래로. 📢 요주의 단지는 🔥 핫플의 '뉴스' 칩으로 흡수, 💰 영향 뉴스는
+// 📰 뉴스 탭(NewsList)으로 옮겼다.
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import useLoanProfile from "./useLoanProfile";
-import { classifyNews } from "../lib/news";
+import { useShell } from "./AppShell";
 import { buildNewsWatch } from "../lib/newsWatch";
 import { loadSeen, markSeen } from "../lib/briefingSeen";
 import { emptyHint } from "./briefing/styles";
-import NewsWatchCard from "./briefing/NewsWatchCard";
+import HotCard from "./briefing/HotCard";
 import FavoriteCard from "./briefing/FavoriteCard";
 import ScheduleCard from "./briefing/ScheduleCard";
 import MarketSignalCard from "./briefing/MarketSignalCard";
 import DealFeedCard from "./briefing/DealFeedCard";
 import SubscriptionCard from "./briefing/SubscriptionCard";
-import ImpactNewsCard from "./briefing/ImpactNewsCard";
 
-const IMPACT_CATS = ["대출·금리", "정책·세금"]; // 내 자금 계획에 직접 영향
-const MAX_IMPACT = 3;
+const EMPTY_HOT = { today: { complexes: [] }, week: { complexes: [] } };
 
 // 지도의 assets 정의와 같다 — 여유현금 + 보유주택 매도 실수령.
 function usableAssets(p) {
@@ -35,12 +36,14 @@ function usableAssets(p) {
   return (Number(p.assets) || 0) + net;
 }
 
-export default function Briefing({ news, days = 7, active = true }) {
+export default function Briefing({ news, active = true }) {
   const [data, setData] = useState(null); // null = 로딩 중
   const [subs, setSubs] = useState(null); // 🏗 청약 — /api/briefing과 무관, 같이 출발시킨다
+  const [hot, setHot] = useState(null); // 🔥 핫플 — 역시 무관, 같이 출발
   // ⚠️ 마운트 때 한 번 읽지 말고 구독할 것 — 오늘 탭은 keep-alive라 지도에서 바꾼 자금이 안 따라온다.
   const profile = useLoanProfile();
   const [seen, setSeen] = useState({});
+  const { focusComplex } = useShell();
 
   useEffect(() => {
     setSeen(loadSeen()); // 렌더용 스냅샷 — markSeen 후에도 이번 방문의 🆕는 유지된다
@@ -50,7 +53,7 @@ export default function Briefing({ news, days = 7, active = true }) {
         setData(d.complexes ? d : { complexes: [], upcoming: [] });
         markSeen(d.complexes); // 본 순간 확인 처리 → 다음 방문엔 🆕가 빠진다
       })
-      .catch(() => setData({ complexes: [], upcoming: [] })); // 실패해도 뉴스 목록은 살린다
+      .catch(() => setData({ complexes: [], upcoming: [] })); // 실패해도 나머지는 살린다
 
     // ⚠️ 청약 fetch를 SubscriptionCard 안으로 되돌리지 말 것. 그 카드는 로딩 게이트
     //    뒤에 마운트돼서, 무관한 두 요청이 직렬화됐다 — 2026-08-05 실측(로컬 prod 빌드):
@@ -60,6 +63,12 @@ export default function Briefing({ news, days = 7, active = true }) {
       .then((r) => r.json())
       .then((d) => setSubs(d.items || []))
       .catch(() => setSubs([])); // 실패해도 나머지 브리핑은 살린다
+
+    // 🔥 핫플 — 같은 이유로 여기서 동시 출발(카드 안 fetch 금지).
+    fetch("/api/hot")
+      .then((r) => r.json())
+      .then((d) => setHot(d.week ? d : EMPTY_HOT))
+      .catch(() => setHot(EMPTY_HOT));
   }, []);
 
   // keep-alive라 다시 들어와도 마운트되지 않는다 → 탭에 다시 들어올 때 조용히 재조회(스켈레톤 없이).
@@ -77,20 +86,8 @@ export default function Briefing({ news, days = 7, active = true }) {
       .catch(() => {});
   }, [active]);
 
-  // 내게 영향 있는 뉴스 — 대출·금리/정책·세금 + 관심지역 기사.
-  const impact = useMemo(
-    () =>
-      (news || [])
-        .filter((it) => {
-          const cat = it.cat || classifyNews(it.title);
-          return IMPACT_CATS.includes(cat) || (it.keyword || "").endsWith(" 아파트");
-        })
-        .slice(0, MAX_IMPACT),
-    [news]
-  );
-
-  // 📢 요주의 단지 — 뉴스에 반복 등장한 단지. /api/news 응답에서 바로 파생하므로
-  // 추가 요청도 DB 컬럼도 없다(classifyNews와 같은 방침).
+  // 📢 뉴스 요주의 단지 — 🔥 핫플 '뉴스' 칩과 종합 점수의 뉴스 가점 원료. /api/news 응답에서
+  // 바로 파생하므로 추가 요청도 DB 컬럼도 없다(classifyNews와 같은 방침).
   // ⚠️ useMemo 필수 — news가 300~600건이고 제목마다 정규식을 여러 벌 돌린다.
   const watch = useMemo(() => buildNewsWatch(news || []), [news]);
 
@@ -103,9 +100,9 @@ export default function Briefing({ news, days = 7, active = true }) {
   );
 
   // 로딩 중엔 자리만 잡아둔다.
-  // ⚠️ null을 반환하지 말 것 — 브리핑 영역이 0px였다가 응답이 오는 순간 카드 여러 장이
-  //    한꺼번에 나타나며 아래 뉴스 목록을 밀어냈다(≈1.9s 뒤 레이아웃 점프, 2026-08-05).
-  //    청약 카드는 여기 끼우지 않는다 — 최종 위치가 피드 아래라, 먼저 띄우면 그 카드가
+  // ⚠️ null을 반환하지 말 것 — 영역이 0px였다가 응답이 오는 순간 카드 여러 장이
+  //    한꺼번에 나타나며 아래를 밀어냈다(≈1.9s 뒤 레이아웃 점프, 2026-08-05).
+  //    청약 카드는 여기 끼우지 않는다 — 최종 위치가 아래라, 먼저 띄우면 그 카드가
   //    다시 아래로 내려가는 2차 점프가 생긴다. fetch는 이미 위에서 출발했으므로 손해 없음.
   if (data === null) {
     return (
@@ -118,6 +115,12 @@ export default function Briefing({ news, days = 7, active = true }) {
 
   const hasIncome = Number(profile?.income) > 0;
   const assets = usableAssets(profile);
+  const hotCard = (
+    <HotCard
+      hot={hot} watch={watch} profile={profile} assets={assets} hasIncome={hasIncome}
+      onFocus={focusComplex}
+    />
+  );
 
   // ⚠️ complexes·upcoming만 보고 판정하지 말 것. 📊 시장 신호와 🆕 새 거래 피드는 ★ "단지"가
   //    아니라 관심 "지역" 기준이라, ★ 단지에 최근 30일 거래가 없어도 내용이 있다. 예전 판정은
@@ -131,18 +134,15 @@ export default function Briefing({ news, days = 7, active = true }) {
     data.feed?.length;
 
   // 즐겨찾기가 아예 없을 때만 안내 한 줄(이때 서버는 signal·feed를 아예 만들지 않는다).
-  // ⚠️ 청약 레이더는 이 분기에서도 렌더한다 — ★와 무관한 정보라 즐겨찾기가 없는
-  //    사용자에게도 보여야 한다(안내만 뜨는 빈 화면 방지).
   if (!hasAny) {
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        {/* ⚠️ 🔥 핫플은 이 분기에서 **반드시** 렌더한다 — ★가 하나도 없는 사람에게 ★를 담게 만드는
+            입구다(📢 요주의 단지 카드에서 상속한 규칙). 청약 레이더도 ★와 무관한 정보라 같은 이유로 여기 있다. */}
+        {hotCard}
         <div style={emptyHint}>
           지도에서 <b>★</b>로 관심 단지를 담으면, 여기에 그 단지의 새 실거래와 일정이 떠요.
         </div>
-        {/* ⚠️ 요주의 단지는 이 분기에서 **반드시** 렌더한다. ★가 하나도 없는 사람에게
-            ★를 담게 만드는 게 이 카드의 목적이라, 여기서 빠지면 정작 필요한 사람이 못 본다
-            (청약 레이더가 같은 이유로 이 분기에 있다). */}
-        {watch.length > 0 && <NewsWatchCard rows={watch} days={days} />}
         <SubscriptionCard items={subs} profile={profile} assets={assets} hasIncome={hasIncome} />
       </div>
     );
@@ -150,6 +150,7 @@ export default function Briefing({ news, days = 7, active = true }) {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      {hotCard}
       {data.complexes?.length > 0 && (
         <FavoriteCard
           complexes={data.complexes}
@@ -157,10 +158,10 @@ export default function Briefing({ news, days = 7, active = true }) {
           profile={profile}
           assets={assets}
           hasIncome={hasIncome}
+          onFocus={focusComplex}
         />
       )}
       {data.upcoming?.length > 0 && <ScheduleCard upcoming={data.upcoming} />}
-      {data.signal && <MarketSignalCard signal={data.signal} />}
       {data.feed?.length > 0 && (
         <DealFeedCard
           feed={data.feed}
@@ -168,21 +169,20 @@ export default function Briefing({ news, days = 7, active = true }) {
           profile={profile}
           assets={assets}
           hasIncome={hasIncome}
+          onFocus={focusComplex}
         />
       )}
+      {/* 📊 신호는 "가끔 보는 것"이라 매일 바뀌는 카드들 아래, 요약 행으로 접혀 있다 */}
+      {data.signal && <MarketSignalCard signal={data.signal} />}
       {/* 청약도 지도와 같은 calcMaxLoan으로 자금 판정을 붙인다 → profile·assets가 필요하다. */}
       <SubscriptionCard items={subs} profile={profile} assets={assets} hasIncome={hasIncome} />
-      {/* 📢 요주의 단지는 "새 후보 발견"이라 매일 바뀌지 않는다 → 매일 바뀌는 카드(관심단지·
-          일정·신호·피드)보다 아래, 탐색성 카드인 청약 옆에 둔다. */}
-      {watch.length > 0 && <NewsWatchCard rows={watch} days={days} />}
-      {impact.length > 0 && <ImpactNewsCard news={impact} hasIncome={hasIncome} />}
     </div>
   );
 }
 
-// 카드 한 장 높이의 자리표시. 실제 첫 카드(관심 단지)의 대략적인 높이에 맞춘다.
+// 첫 카드(🔥 핫플)의 대략적인 높이 — Task 10 실측으로 조정.
 const skeleton = {
-  height: 132,
+  height: 220,
   borderRadius: 16,
   background: "linear-gradient(180deg, #ffffff 0%, #f1f5f9 100%)",
   border: "1px solid #e2e8f0",

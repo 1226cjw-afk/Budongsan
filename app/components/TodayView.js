@@ -12,7 +12,7 @@ export default function TodayView() {
   return (
     <div style={{ maxWidth: 640, margin: "0 auto", display: "flex", flexDirection: "column", gap: 10 }}>
       <TabHeader title="🔥 오늘" sub="관심 단지 · 새 신고 · 청약 — 매일 아침 갱신" />
-      <Briefing news={news.withCat} days={news.days} active={tab === "today"} />
+      <Briefing news={news.withCat} active={tab === "today"} />
     </div>
   );
 }

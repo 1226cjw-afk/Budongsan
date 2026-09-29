@@ -13,10 +13,10 @@ import { regionName } from "../../lib/regions";
 import { isNew, complexKey } from "../../lib/briefingSeen";
 import {
   card, cardHead, headSub, row, rowDivider, rowTop, rowName, rowPrice, rowMeta,
-  rowBadges, upTag, downTag, okTag, noTag,
+  rowBadges, upTag, downTag, okTag, noTag, rowBtn,
 } from "./styles";
 
-export default function FavoriteCard({ complexes, seen, profile, assets, hasIncome }) {
+export default function FavoriteCard({ complexes, seen, profile, assets, hasIncome, onFocus }) {
   const loanFor = loanCalcFor(profile, assets);
   return (
     <section>
@@ -33,7 +33,11 @@ export default function FavoriteCard({ complexes, seen, profile, assets, hasInco
             : null;
           const gap = ln && ln.maxLoan > 0 ? assets - ln.requiredCash : null;
           return (
-            <div key={complexKey(c)} style={{ ...row, ...(i > 0 ? rowDivider : null) }}>
+            <button
+              key={complexKey(c)}
+              onClick={() => onFocus?.({ lawdCd: c.lawdCd, aptNm: c.aptNm })}
+              style={{ ...row, ...rowBtn, ...(i > 0 ? rowDivider : null) }}
+            >
               <div style={rowTop}>
                 <span style={rowName}>
                   {fresh && "🆕 "}
@@ -59,7 +63,7 @@ export default function FavoriteCard({ complexes, seen, profile, assets, hasInco
                   </span>
                 )}
               </div>
-            </div>
+            </button>
           );
         })}
       </div>
