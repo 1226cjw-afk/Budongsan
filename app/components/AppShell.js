@@ -20,6 +20,9 @@ import { classifyNews, newsPriority } from "../lib/news";
 import { countNew } from "../lib/briefingSeen";
 import { tabPanelMobile, tabPanelDesktop } from "./mapStyles";
 
+// 기사는 하루 한 번(06:30) 수집되지만 수동 수집·지연 반영이 있어 3시간이면 충분히 신선하다.
+const NEWS_MAX_AGE_MS = 3 * 60 * 60 * 1000;
+
 const ShellCtx = createContext(null);
 export const useShell = () => useContext(ShellCtx);
 
@@ -37,7 +40,9 @@ function useNewsFeed(enabled) {
   const profile = useLoanProfile();
   const hasIncome = Number(profile?.income) > 0;
 
+  const loadedAt = useRef(0);
   const reload = useCallback(async () => {
+    loadedAt.current = Date.now();
     try {
       // ⚠️ limit 600: 2026-09-02 키워드 확장 후 최근 7일이 이미 372건. 잘리면 요주의 집계 모수가 준다.
       const res = await fetch("/api/news?limit=600");
@@ -67,9 +72,16 @@ function useNewsFeed(enabled) {
       }),
     [items, hasIncome]
   );
+  // keep-alive라 한 번 받은 기사가 며칠씩 남을 수 있다(모바일 탭 수명) — 오래됐으면 탭 진입 때 다시 받는다.
+  const refreshIfStale = useCallback(
+    (maxAgeMs) => {
+      if (started.current && Date.now() - loadedAt.current > maxAgeMs) reload();
+    },
+    [reload]
+  );
   return useMemo(
-    () => ({ items, withCat, days, error, reload, hasIncome }),
-    [items, withCat, days, error, reload, hasIncome]
+    () => ({ items, withCat, days, error, reload, refreshIfStale, hasIncome }),
+    [items, withCat, days, error, reload, refreshIfStale, hasIncome]
   );
 }
 
@@ -85,6 +97,10 @@ export default function AppShell({ children }) {
   }, [tab]);
 
   const news = useNewsFeed(visited.has("today") || visited.has("news"));
+  const { refreshIfStale } = news;
+  useEffect(() => {
+    if (tab !== "map") refreshIfStale(NEWS_MAX_AGE_MS);
+  }, [tab, refreshIfStale]);
 
   // 🔥 오늘 배지 — 브리핑 미확인 단지 수. 지도 초기 로드와 경쟁하지 않게 조금 늦게 부른다.
   const [newsNew, setNewsNew] = useState(0);

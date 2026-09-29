@@ -200,13 +200,35 @@ export default function KakaoMap() {
   useEffect(() => {
     if (!detailOpen) return;
     window.history.pushState({ ...window.history.state, reSheet: "detail" }, "");
-    const onPop = () => setSelected(null);
+    // ⚠️ 도착한 항목이 여전히 상세면 닫지 않는다 — 상세 위에 설정 시트를 열었다가 뒤로가기로 설정만
+    //    닫는 경우 popstate가 두 리스너에 다 온다.
+    const onPop = () => {
+      if (window.history.state?.reSheet !== "detail") setSelected(null);
+    };
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
   }, [detailOpen]);
   function closeDetail() {
     if (window.history.state?.reSheet === "detail") window.history.back(); // → popstate → setSelected(null)
     else setSelected(null);
+  }
+
+  // ⚙️ 설정 시트도 같은 방식 — 뒤로가기 = 설정 닫기. 없으면 홈 화면 북마크(히스토리 1칸)에서 ⚙️를 열고
+  // 뒤로가기하면 앱을 벗어나고, 탭 이동 뒤엔 설정이 열린 채 이전 탭으로 간다(2026-09-29 리뷰 · 실측:
+  // 오늘 → 지도 → ⚙️ → 뒤로 = /news로 가고 설정은 열린 채).
+  const settingsSheetOpen = isMobile && settingsOpen;
+  useEffect(() => {
+    if (!settingsSheetOpen) return;
+    window.history.pushState({ ...window.history.state, reSheet: "settings" }, "");
+    const onPop = () => {
+      if (window.history.state?.reSheet !== "settings") setSettingsOpen(false);
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, [settingsSheetOpen]);
+  function closeSettings() {
+    if (window.history.state?.reSheet === "settings") window.history.back();
+    else setSettingsOpen(false);
   }
 
   const detail = useMemo(() => {
@@ -1106,7 +1128,7 @@ export default function KakaoMap() {
       favorites={favorites}
       showFavs={showFavs} setShowFavs={setShowFavs}
       showProfile={showProfile} setShowProfile={setShowProfile}
-      onOpenList={() => { setSettingsOpen(false); setListSnap("half"); setShowFavs(false); setShowProfile(false); }}
+      onOpenList={() => { closeSettings(); setListSnap("half"); setShowFavs(false); setShowProfile(false); }}
       showCostNotice={showCostNotice}
       onDismissCostNotice={dismissCostNotice}
       profile={profile}
@@ -1230,7 +1252,7 @@ export default function KakaoMap() {
           />
           {/* ⚠️ 설정과 지도 시트는 동시에 렌더하지 않는다 — "한 번에 하나" 성질(겹침 구조적 불가) 유지 */}
           {settingsOpen ? (
-            <MobileSheet open onClose={() => setSettingsOpen(false)}>
+            <MobileSheet open onClose={closeSettings}>
               {controlPanelContent}
             </MobileSheet>
           ) : (

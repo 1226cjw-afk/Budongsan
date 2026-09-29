@@ -73,6 +73,8 @@ export default function Briefing({ news, active = true }) {
 
   // keep-alive라 다시 들어와도 마운트되지 않는다 → 탭에 다시 들어올 때 조용히 재조회(스켈레톤 없이).
   // 지도에서 ★를 담고 오면 관심 단지·피드에 바로 보여야 한다.
+  // ⚠️ 핫플·청약도 같이 — 모바일 브라우저는 탭을 며칠씩 살려 둬서, 안 하면 어제의 "오늘" 핫플이
+  //    "오늘"이라는 라벨로 계속 뜬다(2026-09-29 리뷰). 셋 다 캐시 라우트라 가볍다.
   const seenActive = useRef(false);
   useEffect(() => {
     if (!active) return;
@@ -83,6 +85,14 @@ export default function Briefing({ news, active = true }) {
     fetch("/api/briefing")
       .then((r) => r.json())
       .then((d) => d.complexes && setData(d))
+      .catch(() => {});
+    fetch("/api/hot")
+      .then((r) => r.json())
+      .then((d) => d.week && setHot(d))
+      .catch(() => {});
+    fetch("/api/subscription")
+      .then((r) => r.json())
+      .then((d) => d.items && setSubs(d.items))
       .catch(() => {});
   }, [active]);
 
