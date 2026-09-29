@@ -14,6 +14,10 @@ import { daysBetweenYmd, kstDate } from "../lib/format";
 import { C, CARD_SHADOW, TRANSITION } from "../lib/palette";
 import { useShell } from "./AppShell";
 import { TabHeader } from "./TabBar";
+import ImpactNewsCard from "./briefing/ImpactNewsCard";
+
+const IMPACT_CATS = ["대출·금리", "정책·세금"]; // 내 자금 계획에 직접 영향
+const MAX_IMPACT = 3;
 
 const CAT_EMOJI = {
   "매매·시세": "📈", "정책·세금": "🏛️", "대출·금리": "💰",
@@ -50,7 +54,7 @@ function timeLabel(iso) {
 export default function NewsList() {
   // items: null = 로딩 중 / days: 서버가 자른 기간(라벨이 서버와 어긋나지 않게)
   const { news } = useShell();
-  const { items, withCat, days, error, reload } = news;
+  const { items, withCat, days, error, reload, hasIncome } = news;
   // "" = 전체 | "must" = 🔴 필독 | "region" = ⭐ 관심지역 | 카테고리명
   const [sel, setSel] = useState("");
   const [collecting, setCollecting] = useState(false);
@@ -85,6 +89,15 @@ export default function NewsList() {
     return NEWS_CATEGORIES.filter((c) => present.has(c));
   }, [withCat]);
   const hasRegion = useMemo(() => withCat.some((it) => isRegionKeyword(it.keyword)), [withCat]);
+  // 💰 내 자금에 영향 — 🔥 오늘 탭에서 옮겨 왔다(2026-09-29). 뉴스를 보러 온 곳에서 먼저 보이는 게 맞다.
+  // 칩 필터와 무관하게 전체 목록 기준(“전체” 칩일 때만 노출 — 다른 칩에선 목록과 중복).
+  const impact = useMemo(
+    () =>
+      withCat
+        .filter((it) => IMPACT_CATS.includes(it.cat) || (it.keyword || "").endsWith(" 아파트"))
+        .slice(0, MAX_IMPACT),
+    [withCat]
+  );
   const filtered = useMemo(() => {
     if (!sel) return withCat;
     if (sel === "must") return withCat.filter((it) => it.priority === "필독");
@@ -146,6 +159,8 @@ export default function NewsList() {
             )}
           </div>
         )}
+
+        {sel === "" && impact.length > 0 && <ImpactNewsCard news={impact} hasIncome={hasIncome} />}
 
         {items === null ? (
           <div style={emptyBox}>불러오는 중…</div>
