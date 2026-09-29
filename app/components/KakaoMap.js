@@ -17,10 +17,11 @@ import { bestFit, buildComplexRows, sortComplexRows } from "../lib/complexRows";
 import HelpModal from "./HelpModal";
 import { MobileTopBar, MobileSheet } from "./MobileShell";
 import ControlPanel from "./map/ControlPanel";
+import MapSheet from "./map/MapSheet";
 import ComplexList from "./map/ComplexList";
 import DetailPanel from "./map/DetailPanel";
 import {
-  controlPanel, detailPanel, pillBtn, locateBtn, regionToastBox, regionToastBtn,
+  controlPanel, detailPanel, locateBtn, regionToastBox, regionToastBtn, TABBAR_H, SNAP_H,
 } from "./mapStyles";
 
 // 카카오맵 + 국토부 실거래가. 지도 이동 시 중심 지역을 자동 인식해 그 시군구 데이터를 로드하고,
@@ -156,8 +157,9 @@ export default function KakaoMap() {
   const [nameQuery, setNameQuery] = useState(""); // 리스트 이름 검색(딥링크 q로도 채워진다)
   const pendingPickRef = useRef(false); // 딥링크 착지 후 결과가 1곳이면 자동 선택(1회성)
 
-  const [sheet, setSheet] = useState(null);
-  const [listSnap, setListSnap] = useState("peek"); // 모바일 지도 시트 높이: peek | half | full
+  // 모바일 시트: 지도 시트(목록 peek/half/full + 상세 스택)와 ⚙️ 설정 시트(모달). 둘은 동시에 렌더되지 않는다.
+  const [listSnap, setListSnap] = useState("peek");
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [householdMap, setHouseholdMap] = useState(new Map()); // favKey → 세대수|null (lazy)
   const infoInflightRef = useRef(new Set()); // 세대수 조회 중복 방지
 
@@ -176,13 +178,28 @@ export default function KakaoMap() {
     lawdCdRef.current = lawdCd;
   }, [lawdCd]);
 
-  // 모바일: 단지가 선택되면 세부 시트로 전환한다. 슬롯이 하나라 설정·목록 시트는
-  // 자동으로 닫히고, 따라서 상단 바와 겹칠 패널이 애초에 존재하지 않는다.
+  // 모바일: 단지가 선택되면 상세가 목록 시트 위에 쌓인다. 접혀 있었으면 half로 편다.
   useEffect(() => {
-    if (!isMobile) return;
-    if (selected) setSheet("detail");
-    else setSheet((s) => (s === "detail" ? null : s));
+    if (isMobile && selected) setListSnap((s) => (s === "peek" ? "half" : s));
   }, [selected, isMobile]);
+
+  // 모바일 뒤로가기 = 상세 닫기(→ 목록). 상세가 열리는 순간 히스토리 한 칸을 쌓는다.
+  // ⚠️ history.state를 펼쳐서 넣을 것 — Next App Router가 자기 상태(__NA 등)를 거기 둔다. 빠지면
+  //    popstate에서 Next가 전체 새로고침을 한다. 우리 키(reSheet)는 그 옆에 얹기만 한다.
+  // ⚠️ 상세가 다른 경로(지역 전환·loadTrades의 setSelected(null))로 닫히면 쌓인 한 칸이 남는다 —
+  //    그 뒤 뒤로가기 한 번은 아무 일도 안 한다(무해). 버튼으로 닫을 땐 closeDetail이 history.back().
+  const detailOpen = isMobile && !!selected;
+  useEffect(() => {
+    if (!detailOpen) return;
+    window.history.pushState({ ...window.history.state, reSheet: "detail" }, "");
+    const onPop = () => setSelected(null);
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, [detailOpen]);
+  function closeDetail() {
+    if (window.history.state?.reSheet === "detail") window.history.back(); // → popstate → setSelected(null)
+    else setSelected(null);
+  }
 
   const detail = useMemo(() => {
     if (!selected) return null;
@@ -337,7 +354,7 @@ export default function KakaoMap() {
       if (link.q) {
         setNameQuery(link.q);
         pendingPickRef.current = true;
-        setSheet("list"); // 모바일: 목록 시트를 열어 착지 결과를 바로 보여준다
+        setListSnap("half"); // 모바일: 목록 시트를 펴서 착지 결과를 바로 보여준다
       }
       // 주소창을 정리한다 — 안 지우면 사용자가 지도를 옮긴 뒤 새로고침할 때마다
       // 딥링크가 다시 발동해 원래 자리로 끌려간다.
@@ -919,12 +936,24 @@ export default function KakaoMap() {
   }, [listRows, lawdCd]);
 
   // 리스트 행 클릭 → 단지 선택 + 지도 이동(자동맞춤 없이 그 위치로).
+  // 모바일: half 시트가 화면 아래 절반을 덮는다 → 목표 중심을 핀보다 innerHeight/4 px **아래**로 잡아
+  //   핀이 상단 바와 시트 사이 빈 영역 가운데에 오게 한다(2026-09-29 실측: 예전엔 핀이 시트 뒤에 숨었다).
+  // ⚠️ fitRef=false를 먼저 — panTo(애니메이션)와 데이터 도착 후 setBounds가 겹치면 화면이 밀린다.
   function selectComplex(c) {
     setSelected(c);
-    if (c.lat != null && mapRef.current) {
-      fitRef.current = false;
-      moveMap(() => mapRef.current.panTo(new window.kakao.maps.LatLng(c.lat, c.lng)));
+    const map = mapRef.current;
+    if (c.lat == null || !map) return;
+    fitRef.current = false;
+    const kakao = window.kakao;
+    let target = new kakao.maps.LatLng(c.lat, c.lng);
+    if (isMobile) {
+      const proj = map.getProjection();
+      const p = proj.containerPointFromCoords(target);
+      target = proj.coordsFromContainerPoint(
+        new kakao.maps.Point(p.x, p.y + Math.round(window.innerHeight / 4))
+      );
     }
+    moveMap(() => map.panTo(target));
   }
 
   function selectRegion(code) {
@@ -993,8 +1022,8 @@ export default function KakaoMap() {
 
   const sortOptions = affordMode ? [...SORT_OPTIONS, SORT_GAP] : SORT_OPTIONS;
 
-  // 모바일: 상단은 1줄 바(MobileTopBar), 컨트롤·목록·세부는 전부 하단 시트 하나로.
-  //   시트 슬롯이 단일 상태(sheet)라 동시에 둘 이상 열릴 수 없다 = 겹침 구조적 불가.
+  // 모바일: 상단 1줄 바 + 바닥의 지도 시트(목록 peek/half/full, 상세는 그 위에 쌓임) + ⚙️ 설정 시트(모달).
+  //   설정이 열리면 지도 시트는 렌더하지 않는다 = 겹침 구조적 불가(예전 단일 슬롯의 성질 유지).
   //   패널 자체는 시트 안의 콘텐츠가 되므로 위치·배경·그림자를 벗긴다.
   // 데스크톱: 좌측 패널이 컨트롤+단지 리스트(네이버식)로 전체 높이.
   const bare = {
@@ -1033,7 +1062,7 @@ export default function KakaoMap() {
       favorites={favorites}
       showFavs={showFavs} setShowFavs={setShowFavs}
       showProfile={showProfile} setShowProfile={setShowProfile}
-      onOpenList={() => { setSheet("list"); setShowFavs(false); setShowProfile(false); }}
+      onOpenList={() => { setSettingsOpen(false); setListSnap("half"); setShowFavs(false); setShowProfile(false); }}
       showCostNotice={showCostNotice}
       onDismissCostNotice={dismissCostNotice}
       profile={profile}
@@ -1111,11 +1140,17 @@ export default function KakaoMap() {
           모바일은 시트가 열려 있으면 가려지므로 숨긴다.
           ⚠️ 데스크톱에서 right 정렬 금지 — 세부패널(right:14, width:320, 전체높이)이 덮어
              클릭이 안 된다. 좌우 패널 사이 빈 지도 영역(left:368)에 둔다. */}
-      {!(isMobile && sheet) && (
+      {!(isMobile && (settingsOpen || selected || listSnap !== "peek")) && (
         <button
           onClick={() => locateMe()}
           disabled={locating}
-          style={{ ...locateBtn, ...(isMobile ? { left: "auto", right: 14, bottom: 16 } : null) }}
+          style={{
+            ...locateBtn,
+            // 모바일: 접힌 목록 시트(peek) 바로 위 — 시트·탭바 높이를 따라간다.
+            ...(isMobile
+              ? { left: "auto", right: 14, bottom: `calc(${TABBAR_H}px + env(safe-area-inset-bottom) + ${SNAP_H.peek + 12}px)` }
+              : null),
+          }}
           title="현위치로 이동"
           aria-label="현위치로 이동"
         >
@@ -1145,37 +1180,30 @@ export default function KakaoMap() {
           <MobileTopBar
             summary={shortSummary}
             hasFilter={hasFilter}
-            onOpenSettings={() => setSheet("settings")}
+            onOpenSettings={() => setSettingsOpen(true)}
             onRefresh={() => loadTrades(lawdCd, { refresh: true })}
             refreshing={loading}
           />
-          <MobileSheet
-            open={sheet != null}
-            onClose={() => {
-              if (sheet === "detail") setSelected(null); // effect가 sheet도 null로 되돌린다
-              else setSheet(null);
-            }}
-          >
-            {sheet === "settings" && (
-              <>
-                {controlPanelContent}
-                <button onClick={() => setSheet("list")} style={pillBtn}>
-                  📋 단지 목록 보기
-                </button>
-              </>
-            )}
-            {sheet === "list" && (
-              <>
-                <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>
-                  📋 {regionLabel} 단지 목록
-                </div>
-                {listContent}
-              </>
-            )}
-            {sheet === "detail" && detailContent && (
-              <div style={detailPanelStyle}>{detailContent}</div>
-            )}
-          </MobileSheet>
+          {/* ⚠️ 설정과 지도 시트는 동시에 렌더하지 않는다 — "한 번에 하나" 성질(겹침 구조적 불가) 유지 */}
+          {settingsOpen ? (
+            <MobileSheet open onClose={() => setSettingsOpen(false)}>
+              {controlPanelContent}
+            </MobileSheet>
+          ) : (
+            <MapSheet
+              snap={listSnap}
+              setSnap={setListSnap}
+              title={`📋 ${shortSummary}`}
+              detail={detailContent ? <div style={detailPanelStyle}>{detailContent}</div> : null}
+              detailTitle={selected?.aptNm}
+              onBack={closeDetail}
+              onClose={() => {
+                closeDetail();
+                setListSnap("peek");
+              }}
+              list={listContent}
+            />
+          )}
         </>
       ) : (
         <>

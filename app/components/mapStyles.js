@@ -404,3 +404,41 @@ export const segBtn = {
   color: C.sub, textDecoration: "none", whiteSpace: "nowrap",
 };
 export const segBtnOn = { background: "#fff", color: C.text, boxShadow: "0 1px 2px rgba(15,23,42,0.08)" };
+
+// ── 모바일 지도 시트(목록 ↔ 상세 스택) ─────────────────────────────
+// 목록은 늘 바닥에 떠 있고(peek) 상세는 그 위에 쌓인다. 백드롭 없음 — 지도가 보이고 만져져야 한다.
+// ⚠️ 높이는 SNAP_H로만. full = 상단 바(≈60) 아래까지.
+export const SNAP_H = {
+  peek: 64,
+  half: "50vh",
+  full: `calc(100dvh - ${TABBAR_H}px - env(safe-area-inset-bottom) - 64px)`,
+};
+export const mapSheet = {
+  position: "absolute", left: 0, right: 0,
+  bottom: `calc(${TABBAR_H}px + env(safe-area-inset-bottom))`, zIndex: Z.SHEET,
+  display: "flex", flexDirection: "column", boxSizing: "border-box",
+  ...GLASS, background: "rgba(255,255,255,0.97)", borderRadius: "20px 20px 0 0",
+  boxShadow: "0 -1px 2px rgba(15,23,42,0.04), 0 -8px 32px rgba(15,23,42,0.16)",
+  transition: "height 0.22s ease", overflow: "hidden",
+};
+export const sheetHandle = {
+  flex: "0 0 auto", padding: "8px 14px 6px", touchAction: "none", cursor: "grab",
+};
+export const sheetHeadRow = {
+  display: "flex", alignItems: "center", gap: 8, minHeight: 32,
+  fontSize: 13.5, fontWeight: 700, color: C.text,
+};
+export const sheetHeadTitle = {
+  flex: 1, minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+};
+export const sheetHeadBtn = {
+  flex: "0 0 auto", padding: "5px 10px", borderRadius: 9,
+  borderWidth: 1, borderStyle: "solid", borderColor: C.border,
+  background: "#fff", color: C.sub, fontSize: 12, fontWeight: 700, cursor: "pointer",
+};
+// ⚠️ 목록·상세는 각자 스크롤 컨테이너 — 상세에서 "← 목록"으로 돌아왔을 때 목록 스크롤이 보존된다.
+//    숨김은 visibility(display:none은 스크롤 위치를 잃는다).
+export const sheetBody = { position: "relative", flex: 1, minHeight: 0 };
+export const sheetPane = {
+  position: "absolute", inset: 0, overflowY: "auto", padding: "0 14px 14px", boxSizing: "border-box",
+};
