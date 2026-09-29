@@ -35,7 +35,7 @@ export default function FavoriteCard({ complexes, seen, profile, assets, hasInco
           return (
             <button
               key={complexKey(c)}
-              onClick={() => onFocus?.({ lawdCd: c.lawdCd, aptNm: c.aptNm })}
+              onClick={() => onFocus?.({ lawdCd: c.lawdCd, aptNm: c.aptNm, umdNm: c.umdNm })}
               style={{ ...row, ...rowBtn, ...(i > 0 ? rowDivider : null) }}
             >
               <div style={rowTop}>

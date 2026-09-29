@@ -11,7 +11,7 @@ import { useShell } from "./AppShell";
 import { PROFILE_EVENT } from "./useLoanProfile";
 import {
   AREA_FILTERS, PRICE_FILTERS, MONTHLY_FILTERS, bandFor,
-  HOT_PCT, SORT_OPTIONS, SORT_GAP, matchesComplexName,
+  HOT_PCT, SORT_OPTIONS, SORT_GAP, matchesComplexName, resolveFocus,
 } from "../lib/mapFilters";
 import { bestFit, buildComplexRows, sortComplexRows } from "../lib/complexRows";
 import HelpModal from "./HelpModal";
@@ -112,7 +112,7 @@ const DEFAULT_PROFILE = {
 };
 
 export default function KakaoMap() {
-  const { tab, focusRef } = useShell();
+  const { tab, focusRef, gotoMapTab } = useShell();
   const containerRef = useRef(null);
   const mapRef = useRef(null);
   const geocoderRef = useRef(null);
@@ -163,7 +163,7 @@ export default function KakaoMap() {
   const [onlyBuyable, setOnlyBuyable] = useState(false); // 구매가능 단지만 (자금 설정 시)
   const [nameQuery, setNameQuery] = useState(""); // 리스트 이름 검색(딥링크 q로도 채워진다)
   // 딥링크·🔥 오늘 탭 착지 후 결과가 1곳이면 자동 선택(1회성). 값 = 착지할 지역 코드 | null.
-  const pendingPickRef = useRef(null);
+  const pendingPickRef = useRef(null); // { lawdCd, aptNm, umdNm? } | null
 
   // 모바일 시트: 지도 시트(목록 peek/half/full + 상세 스택)와 ⚙️ 설정 시트(모달). 둘은 동시에 렌더되지 않는다.
   const [listSnap, setListSnap] = useState("peek");
@@ -360,8 +360,7 @@ export default function KakaoMap() {
       lawdCdRef.current = link.lawdCd;
       setLawdCd(link.lawdCd);
       if (link.q) {
-        setNameQuery(link.q);
-        pendingPickRef.current = link.lawdCd;
+        pendingPickRef.current = { lawdCd: link.lawdCd, aptNm: link.q }; // 착지 후 landOn이 처리
         setListSnap("half"); // 모바일: 목록 시트를 펴서 착지 결과를 바로 보여준다
       }
       // 주소창을 정리한다 — 안 지우면 사용자가 지도를 옮긴 뒤 새로고침할 때마다
@@ -433,6 +432,7 @@ export default function KakaoMap() {
               if (!VALID_CODES.has(code) || code === lawdCdRef.current) return;
               fitRef.current = false; // 팬으로 인한 전환 → 자동 맞춤 안 함
               setRegionToast({ from: lawdCdRef.current, to: code });
+              setNameQuery(""); // ⚠️ 이전 지역의 이름 검색이 남으면 새 지역 목록이 "0곳"이 된다
               setLawdCd(code);
             });
           }, IDLE_SETTLE_MS);
@@ -798,11 +798,14 @@ export default function KakaoMap() {
     //    바뀌므로, 그냥 소비하면 **이전 지역** 목록(0곳)에서 기회를 써 버려 착지 후 자동 선택이 안 된다
     //    (2026-09-29 실측: 🔥 핫플 → 강남구 착지, 상세 안 열림). 콜드 딥링크는 그때 데이터가 없어서
     //    드러나지 않았다.
-    if (!pendingPickRef.current || !listRows || tradesData?.lawdCd !== pendingPickRef.current) return;
+    //    ⚠️ 그리고 **필터 전** 전체 단지(tradesData.complexes)에서 찾는다 — listRows는 면적·가격·구매가능만
+    //    필터가 걸려 있어, 자금 부족 핫플을 누르면 "0곳"에 착지했다(2026-09-29 리뷰).
+    const target = pendingPickRef.current;
+    if (!target || tradesData?.lawdCd !== target.lawdCd) return;
     pendingPickRef.current = null;
-    if (listRows.length === 1) selectComplex(listRows[0].c);
+    landOn(target, tradesData.complexes);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [listRows]);
+  }, [tradesData]);
 
   function renderMarkers(rows) {
     const data = tradesData;
@@ -988,6 +991,7 @@ export default function KakaoMap() {
   function selectRegion(code) {
     fitRef.current = true;
     setRegionToast(null); // 직접 고른 지역 — 자동 전환 알림은 필요 없다
+    setNameQuery(""); // 지역이 바뀌면 이전 이름 검색은 의미가 없다(남으면 "0곳")
     setLawdCd(code);
   }
 
@@ -1006,28 +1010,39 @@ export default function KakaoMap() {
       fitRef.current = true; // 좌표 없는 옛 즐겨찾기 → 지역 전체 맞춤 폴백
     }
     setRegionToast(null);
+    setNameQuery("");
     setLawdCd(f.lawd_cd);
   }
 
   // 🔥 오늘 탭(핫플·관심 단지·새 거래)에서 단지로 보내기. AppShell.focusComplex가 부른다.
   // ⚠️ 지역 전환은 selectRegion 경로를 그대로 탄다 — stale 가드·idle 억제·토스트 끔을 새로 만들지 않는다.
-  // ⚠️ 1곳 자동 선택은 딥링크의 pendingPickRef를 재사용한다. 단, 같은 지역이면 데이터 재로드가 없어
-  //    listRows가 안 바뀔 수 있으므로(같은 검색어 재클릭) dataRef에서 바로 찾는다.
-  function focusComplex({ lawdCd: code, aptNm }) {
+  // ⚠️ 다른 지역이면 딥링크의 pendingPickRef 경로(착지 지역 데이터가 온 뒤 landOn). 같은 지역이면
+  //    데이터 재로드가 없으므로 dataRef에서 바로 landOn.
+  function focusComplex({ lawdCd: code, aptNm, umdNm }) {
     if (!VALID_CODES.has(code)) return;
-    const q = aptNm || "";
-    setNameQuery(q);
+    const target = { lawdCd: code, aptNm, umdNm };
     if (code === lawdCdRef.current && dataRef.current?.lawdCd === code) {
-      const hits = (dataRef.current.complexes || []).filter((c) =>
-        matchesComplexName(c.aptNm, q, regionName(code))
-      );
-      if (hits.length === 1) selectComplex(hits[0]);
-      else setListSnap("half");
+      landOn(target, dataRef.current.complexes);
       return;
     }
-    pendingPickRef.current = q ? code : null;
+    pendingPickRef.current = target;
     setListSnap("half");
     selectRegion(code);
+  }
+
+  // 착지: "누른 그 단지"가 한 곳으로 정해지면 바로 연다(lib/mapFilters.resolveFocus — 이름+동 정확 →
+  // 이름 정확 → 부분일치). 여러 곳·0곳이면 이름 검색을 건 목록으로 보여준다.
+  // ⚠️ 데스크톱에서 🔥 오늘 패널(440px)이 좌측 목록을 덮고 있으면 목록이 안 보인다 → 지도 탭으로 넘긴다.
+  function landOn(target, complexes) {
+    const hits = resolveFocus(complexes, target, regionName(target.lawdCd));
+    if (hits.length === 1) {
+      setNameQuery("");
+      selectComplex(hits[0]);
+      return;
+    }
+    setNameQuery(target.aptNm || "");
+    setListSnap("half");
+    if (!isMobile && tab !== "map") gotoMapTab();
   }
   useEffect(() => {
     focusRef.current = focusComplex; // 매 렌더 최신 클로저로 교체(selectComplex가 isMobile을 본다)

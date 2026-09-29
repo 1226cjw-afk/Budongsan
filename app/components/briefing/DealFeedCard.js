@@ -83,7 +83,7 @@ export default function DealFeedCard({ feed, favorites, profile, assets, hasInco
             return (
               <button
                 key={`${t.lawdCd}-${t.umdNm}-${t.aptNm}-${t.dealDate}-${t.amount}-${i}`}
-                onClick={() => onFocus?.({ lawdCd: t.lawdCd, aptNm: t.aptNm })}
+                onClick={() => onFocus?.({ lawdCd: t.lawdCd, aptNm: t.aptNm, umdNm: t.umdNm })}
                 style={{ ...row, ...rowBtn, ...(i > 0 ? rowDivider : null) }}
               >
                 <div style={rowTop}>

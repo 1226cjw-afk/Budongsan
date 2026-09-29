@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { matchesComplexName } from "../app/lib/mapFilters.js";
+import { matchesComplexName, resolveFocus } from "../app/lib/mapFilters.js";
 
 // 단지 리스트의 이름 검색. 사람이 직접 치기도 하지만, 📢 요주의 단지 카드의
 // "지도에서 보기"가 넘겨주는 뉴스 단지명을 받아내는 게 주 용도다.
@@ -47,4 +47,31 @@ test("검색어가 실거래명을 품는 경우도 맞춘다", () => {
 test("두 글자 실거래명이 긴 검색어에 아무렇게나 걸리지 않는다", () => {
   // '삼성'이 '송파삼성래미안' 검색에 걸리면 목록이 오염된다.
   assert.equal(matchesComplexName("삼성", "송파삼성래미안"), false);
+});
+
+// ── 🔥 오늘 탭 → 지도 착지: resolveFocus (2026-09-29 리뷰) ──
+// 사용자는 특정 단지 하나를 눌렀다. 부분일치(matchesComplexName)만 쓰면 '현대'·'삼성'처럼 흔한 이름이
+// 여러 곳에 걸려 목록으로 떨어진다 → 이름+동 정확 일치 → 이름 정확 일치 → 부분일치 순으로 좁힌다.
+const CX = [
+  { aptNm: "현대", umdNm: "구로동" },
+  { aptNm: "현대", umdNm: "개봉동" },
+  { aptNm: "현대홈타운", umdNm: "구로동" },
+  { aptNm: "주공1", umdNm: "구로동" },
+  { aptNm: "주공2", umdNm: "구로동" },
+];
+
+test("이름+동이 정확히 맞으면 그 한 곳", () => {
+  assert.deepEqual(resolveFocus(CX, { aptNm: "현대", umdNm: "개봉동" }, "구로구"), [CX[1]]);
+});
+
+test("동을 모르면 이름 정확 일치만(부분일치 '현대홈타운'은 빼고)", () => {
+  assert.deepEqual(resolveFocus(CX, { aptNm: "현대" }, "구로구"), [CX[0], CX[1]]);
+});
+
+test("정확 일치가 없으면 부분일치로 — 뉴스 이름(구로주공)도 지역 접두어를 떼고 찾는다", () => {
+  assert.deepEqual(resolveFocus(CX, { aptNm: "구로주공" }, "구로구"), [CX[3], CX[4]]);
+});
+
+test("아무것도 안 맞으면 빈 배열", () => {
+  assert.deepEqual(resolveFocus(CX, { aptNm: "없는단지" }, "구로구"), []);
 });

@@ -81,3 +81,21 @@ export function matchesComplexName(aptNm, query, regionName = "") {
   }
   return false;
 }
+
+// 🔥 오늘 탭(핫플·관심 단지·새 거래) → 지도 착지 때 "누른 그 단지"를 찾는다(2026-09-29).
+// 순서: 이름+동 정확 일치 → 이름 정확 일치 → matchesComplexName 부분일치.
+// ⚠️ 부분일치부터 쓰면 '현대'·'삼성'·'래미안'처럼 흔한 이름이 여러 곳에 걸려 목록으로 떨어진다 —
+//    사용자는 특정 단지 하나를 눌렀다(리뷰 지적). 부분일치는 뉴스 이름(구로주공↔주공1)용 폴백이다.
+// ⚠️ complexes는 **필터 전** 전체 단지를 넘길 것. 면적·가격·구매가능만 필터가 걸린 목록에서 찾으면
+//    자금 부족 배지가 붙은 핫플을 눌렀을 때 "0곳"에 착지한다(예원아파트 ★ 사고와 같은 계열).
+export function resolveFocus(complexes, { aptNm, umdNm } = {}, regionName = "") {
+  const list = complexes || [];
+  if (!aptNm) return [];
+  const byName = list.filter((c) => c.aptNm === aptNm);
+  if (umdNm) {
+    const exact = byName.filter((c) => c.umdNm === umdNm);
+    if (exact.length) return exact;
+  }
+  if (byName.length) return byName;
+  return list.filter((c) => matchesComplexName(c.aptNm, aptNm, regionName));
+}

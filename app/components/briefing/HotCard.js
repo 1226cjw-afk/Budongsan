@@ -107,7 +107,7 @@ function TradeRow({ r, i, onFocus, loanFor, assets, hasIncome }) {
   const jump = x.jump && x.jump.pct > 0 && x.reports >= HOT_PRICE_MIN_REPORTS ? x.jump : null;
   return (
     <button
-      onClick={() => onFocus({ lawdCd: x.lawdCd, aptNm: x.aptNm })}
+      onClick={() => onFocus({ lawdCd: x.lawdCd, aptNm: x.aptNm, umdNm: x.umdNm })}
       style={{ ...row, ...rowBtn, ...(i > 0 ? rowDivider : null) }}
     >
       <div style={rowTop}>

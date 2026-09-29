@@ -116,9 +116,11 @@ export default function AppShell({ children }) {
     [isMobile, tab, router]
   );
 
+  const gotoMapTab = useCallback(() => router.push("/"), [router]);
+
   const value = useMemo(
-    () => ({ tab, isMobile, focusRef, focusComplex, news, newsNew }),
-    [tab, isMobile, focusComplex, news, newsNew]
+    () => ({ tab, isMobile, focusRef, focusComplex, gotoMapTab, news, newsNew }),
+    [tab, isMobile, focusComplex, gotoMapTab, news, newsNew]
   );
 
   const panel = (id, node) =>
