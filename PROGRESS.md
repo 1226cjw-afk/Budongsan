@@ -24,6 +24,9 @@ Supabase도 미국 쪽(한국에서 직접 조회 530ms) → 단순 조회도 0.
 | 13 | 홈 화면 추가해도 브라우저 UI | `app/manifest.js` + `apple-icon.png` + `public/icon-{192,512}.png` + `appleWebApp`·`themeColor` | `/manifest.webmanifest` 200 · apple-touch-icon·theme-color 메타 확인 |
 
 테스트 181→200(hotRank 중앙값·동률·기준가 2건, isHotYoy·regionYoyMedian, complexRows hot). 마이그레이션 없음.
+**배포 후 prod 실측(241ca9e, 같은 조건 390×844·CPU 4x·4G)**: 엣지 2회차부터 `X-Vercel-Cache: HIT` — hot 2.6s→0.05s · news 1.9→0.06 ·
+rank 1.1→0.06 · trades 1.4→0.06 (curl, 한국). 페이지: `/api/trades` 4.8s(4,245→9,049ms) → **0.17s**(4,215→4,386) ·
+첫 타일 5,802→**4,568ms** · LCP 7,260→**6,396ms**. 남은 병목은 하이드레이션(첫 fetch 출발 ≈3.7s) — 백로그 참조.
 ⚠️ iOS 홈 화면 앱은 Safari와 localStorage가 분리 — 자금 설정은 한 번 다시 입력(★는 서버라 유지).
 
 ### 남긴 것 (점검 보고 중 이번에 안 한 것)
