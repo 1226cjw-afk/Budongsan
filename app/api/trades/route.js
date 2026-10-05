@@ -2,6 +2,7 @@
 // 수집/지오코딩/캐시 로직은 ../../lib/trades 에 공용화.
 
 import { fetchRawMonths, geocodeMany, monthsBack } from "../../lib/trades";
+import { cachedJson } from "../../lib/httpCache";
 
 export async function GET(request) {
   const { searchParams } = new URL(request.url);
@@ -66,7 +67,8 @@ export async function GET(request) {
     });
   }
 
-  return Response.json({
+  // 엣지 캐시(lib/httpCache.js). ⚠️ refresh=1(🔄 갱신)은 캐시하지 않는다 — 사용자가 "지금 것"을 요구한 요청이다.
+  return cachedJson({
     lawdCd,
     dealYmd,
     months,
@@ -78,5 +80,5 @@ export async function GET(request) {
     excluded, // {cancelled, direct} — 시세에서 제외한 해제·직거래 건수
 
     complexes,
-  });
+  }, { cache: !refresh });
 }

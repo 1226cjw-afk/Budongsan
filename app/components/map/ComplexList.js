@@ -8,7 +8,6 @@
 
 import { C } from "../../lib/palette";
 import { formatManwon } from "../../lib/format";
-import { HOT_PCT } from "../../lib/mapFilters";
 import {
   sortBar, sortSelect, onlyBuyLabel, listScroll, hintText,
   nameSearchBar, nameSearchInput, nameSearchClear, nameSearchMiss,
@@ -105,8 +104,8 @@ export default function ComplexList({
                 </div>
                 <div style={rowBadges}>
                   {r.yoy != null && (
-                    <span style={r.yoy >= HOT_PCT ? hotBadge : r.yoy >= 0 ? upBadge : downBadge}>
-                      {r.yoy >= HOT_PCT ? "🔥 " : ""}1년 {r.yoy >= 0 ? "+" : ""}{r.yoy}%
+                    <span style={r.hot ? hotBadge : r.yoy >= 0 ? upBadge : downBadge}>
+                      {r.hot ? "🔥 " : ""}1년 {r.yoy >= 0 ? "+" : ""}{r.yoy}%
                     </span>
                   )}
                   {r.rebuild && <span style={rebuildBadge}>🏗 재건축연한</span>}

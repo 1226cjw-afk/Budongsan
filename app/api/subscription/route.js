@@ -3,6 +3,7 @@
 
 import { supabaseAdmin, noDbResponse } from "../../lib/supabaseServer";
 import { kstDate } from "../../lib/format";
+import { cachedJson } from "../../lib/httpCache";
 
 // ⚠️ 접수 마감 비교는 KST 달력 날짜로 해야 한다(format.kstDate). UTC 날짜를 그대로 쓰면
 //    KST 00:00~08:59 구간에 어제가 나와, 이미 마감된 공고가 최대 9시간 더 걸리고 카드가
@@ -19,5 +20,5 @@ export async function GET() {
     .limit(20);
   // 테이블이 없거나(0007 미적용) 비어 있으면 조용히 빈 목록 — 카드가 안 뜬다.
   if (error) return Response.json({ items: [] });
-  return Response.json({ items: data || [] });
+  return cachedJson({ items: data || [] }); // 엣지 캐시 — 위 오류 폴백(빈 목록)엔 붙이지 않는다
 }

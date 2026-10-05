@@ -14,9 +14,10 @@ import { formatManwon, shortDate } from "../../lib/format";
 import { toPyeong } from "../../lib/tradeStats";
 import { regionName } from "../../lib/regions";
 import { C } from "../../lib/palette";
+import ChangeTag from "./ChangeTag";
 import {
   card, cardHead, headSub, row, rowDivider, rowTop, rowName, rowPrice, rowMeta,
-  rowBadges, okTag, noTag, upTag, downTag, rowBtn,
+  rowBadges, okTag, noTag, rowBtn,
 } from "./styles";
 
 const MAX_ROWS = 12;
@@ -95,12 +96,7 @@ export default function DealFeedCard({ feed, favorites, profile, assets, hasInco
                   {t.floor ? ` · ${t.floor}층` : ""} · {shortDate(t.dealDate)} 계약
                 </div>
                 <div style={rowBadges}>
-                  {chg != null && (
-                    <span style={chg >= 0 ? upTag : downTag}>
-                      직전 대비 {chg >= 0 ? "+" : ""}
-                      {chg.toFixed(1)}%
-                    </span>
-                  )}
+                  <ChangeTag chg={chg} />
                   {t.gap != null && (
                     <span style={t.gap >= 0 ? okTag : noTag}>
                       {t.gap >= 0 ? `✓ 여유 ${formatManwon(t.gap)}` : `부족 ${formatManwon(-t.gap)}`}

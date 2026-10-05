@@ -6,6 +6,7 @@
 //    assets 정의(자기자금 쪽) / calcMaxLoan의 requiredCash(비용 쪽) — KakaoMap.js 참조.
 
 import { regionName } from "../../lib/regions";
+import { toPyeong } from "../../lib/tradeStats";
 import { C } from "../../lib/palette";
 import { addYearsYmd, daysUntil, formatManwon } from "../../lib/format";
 import {
@@ -48,7 +49,7 @@ export default function ProfileDrawer({
         {owned ? (
           <>
             <div style={{ fontSize: 12, color: C.sub, margin: "4px 0 2px" }}>
-              🏠 {regionName(owned.lawdCd)} {owned.umdNm} {owned.aptNm} {owned.area}㎡
+              🏠 {regionName(owned.lawdCd)} {owned.umdNm} {owned.aptNm} {toPyeong(owned.area)}평
               <button onClick={() => updateProfile({ owned: null })} style={ownedClearBtn}>해제</button>
             </div>
             <label style={fieldRow}>

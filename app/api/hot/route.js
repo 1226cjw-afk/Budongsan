@@ -4,7 +4,8 @@
 
 import { supabaseAdmin, noDbResponse } from "../../lib/supabaseServer";
 import { kstDate, addDaysYmd } from "../../lib/format";
-import { summarizeReports, HOT_PRICE_MIN_REPORTS } from "../../lib/hotRank";
+import { summarizeReports, priceJump } from "../../lib/hotRank";
+import { cachedJson } from "../../lib/httpCache";
 
 const PAGE = 1000; // ⚠️ PostgREST 기본 행 상한 — 페이지네이션 없이 받으면 이번 주분이 조용히 잘린다
 const MAX_PAGES = 30;
@@ -16,7 +17,7 @@ function pick(all) {
   const top = all.slice(0, TOP_BY_REPORTS);
   const keys = new Set(top.map((c) => c.key));
   const price = all
-    .filter((c) => c.jump && c.jump.pct > 0 && c.reports >= HOT_PRICE_MIN_REPORTS && !keys.has(c.key))
+    .filter((c) => priceJump(c) && !keys.has(c.key))
     .sort((a, b) => b.jump.pct - a.jump.pct)
     .slice(0, TOP_BY_PRICE);
   return { total: all.length, complexes: [...top, ...price] };
@@ -39,7 +40,7 @@ export async function GET() {
     rows.push(...(data || []));
     if (!data || data.length < PAGE) break;
   }
-  return Response.json({
+  return cachedJson({ // 엣지 캐시 — lib/httpCache.js
     asOf: today,
     today: pick(summarizeReports(rows.filter((r) => r.reported_on === today))),
     week: pick(summarizeReports(rows)),

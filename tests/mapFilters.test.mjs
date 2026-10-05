@@ -1,6 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { matchesComplexName, resolveFocus } from "../app/lib/mapFilters.js";
+import {
+  matchesComplexName, resolveFocus, isHotYoy, regionYoyMedian, HOT_PCT, EXCESS_HOT_PCT,
+} from "../app/lib/mapFilters.js";
 
 // 단지 리스트의 이름 검색. 사람이 직접 치기도 하지만, 📢 요주의 단지 카드의
 // "지도에서 보기"가 넘겨주는 뉴스 단지명을 받아내는 게 주 용도다.
@@ -74,4 +76,23 @@ test("정확 일치가 없으면 부분일치로 — 뉴스 이름(구로주공)
 
 test("아무것도 안 맞으면 빈 배열", () => {
   assert.deepEqual(resolveFocus(CX, { aptNm: "없는단지" }, "구로구"), []);
+});
+
+// ── 🔥 급등 배지(상대 기준) ─────────────────────────────────
+test("🔥 = 1년 +15%↑ 그리고 지역 중앙값 +10%p↑ (2026-10-05: 절대값만이면 안양 동안구 81%가 🔥)", () => {
+  assert.equal(isHotYoy(14.9, 0), false); // 절대 하한 미달
+  assert.equal(isHotYoy(36, 27), false); // 지역이 다 오른 장 — +9%p는 평범
+  assert.equal(isHotYoy(37, 27), true); // 경계 +10%p
+  assert.equal(isHotYoy(20, -5), true);
+  assert.equal(isHotYoy(null, 0), false);
+  assert.equal(isHotYoy(15, null), true); // 중앙값 없는 작은 지역은 절대값만
+  assert.equal(HOT_PCT, 15);
+  assert.equal(EXCESS_HOT_PCT, 10);
+});
+
+test("지역 중앙값은 표본 5곳 미만이면 null", () => {
+  const m = (vals) => new Map(vals.map((v, i) => [String(i), { yoyPct: v }]));
+  assert.equal(regionYoyMedian(m([1, 2, 3, 4])), null);
+  assert.equal(regionYoyMedian(m([5, 1, null, 3, 2, 4])), 3);
+  assert.equal(regionYoyMedian(null), null);
 });

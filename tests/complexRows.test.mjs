@@ -213,3 +213,17 @@ test("모르는 정렬 키는 원래 순서를 그대로 둔다", () => {
   const rows = [{ price: 2 }, { price: 1 }];
   assert.equal(sortComplexRows(rows, "없는키")[0].price, 2);
 });
+
+test("🔥 판정은 행에 실린다(마커·리스트 공용) — 지역이 다 오른 장에선 +20%도 평범", () => {
+  // 지역 중앙값 27%(5곳 표본) — 가나 +36%는 +9%p라 🔥 아님, 다라 +40%는 +13%p라 🔥
+  const rankMap = new Map([
+    ["비산동|가나아파트", { yoyPct: 36 }],
+    ["관양동|다라아파트", { yoyPct: 40 }],
+    ["x|a", { yoyPct: 20 }], ["x|b", { yoyPct: 27 }], ["x|c", { yoyPct: 25 }],
+  ]);
+  const rows = buildComplexRows({
+    complexes: COMPLEXES, lawdCd: "41173", areaBand: ALL_AREA, priceBand: ALL_PRICE,
+    priceBasis: "recent", rankMap, favSet: new Set(), thisYear: 2026,
+  });
+  assert.deepEqual(rows.map((r) => [r.c.aptNm, r.hot]), [["가나아파트", false], ["다라아파트", true]]);
+});

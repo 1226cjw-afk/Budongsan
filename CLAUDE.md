@@ -9,7 +9,7 @@
 ```bash
 npm run dev                      # http://localhost:3000 (카카오에 등록된 도메인이어야 지도가 뜸)
 npx next build                   # 컴파일·타입·prerender — 변경 검증 필수 1
-npm test                         # node:test 181개 — 변경 검증 필수 2 (린트는 이 프로젝트에 없음)
+npm test                         # node:test 200개 — 변경 검증 필수 2 (린트는 이 프로젝트에 없음)
 ```
 ⚠️ `app/`·`tests/` 편집 시 PostToolUse 훅이 `npm test`를 자동 실행한다(1.5초, `.claude/hooks/test-on-edit.js`).
 실패하면 실패한 테스트 이름·줄이 차단 사유로 돌아온다. `npx next build`는 느려서 훅에 안 넣었다 — 커밋 전 수동.
@@ -80,6 +80,11 @@ effect로 분리(`ready` → `booted`). 실측 trades 출발 1,749→**411ms**, 
 `fetchRawMonths` 재수집 지점이 새로 나타난 거래를 `trade_reports`(0010)에 기록, cron이 서울·경기 전역
 72곳(`ALL_REGIONS`)을 매일 재수집(로컬 13.9s), `/api/hot`이 집계, 칩(종합·거래·가격·뉴스)은 `lib/hotRank.js`.
 ⚠️ **가점·임계값은 임시값** — 7일치 쌓이면 실측으로 확정(PROGRESS 백로그). 테스트 159→181.
+**2026-10-05 자체 점검 → 개선 7건**: ① 🔥 핫플 **확정** — 가격 지표 max→**중앙값**(5%↑ 46%→16%), 동률은
+가격→최근 계약일(지역코드순이라 오늘 1~4위가 전부 부천이었다), 주말·공휴일엔 '이번 주'로 자동 전환
+② 🔥 급등 배지 **상대 기준**(`isHotYoy`: +15%↑ 그리고 지역 중앙값 +10%p↑ — 절대값이던 땐 지역별 최대 92%가 🔥)
+③ 공용 API **엣지 캐시**(`lib/httpCache.js` — 함수가 iad1이라 한국에서 매 요청 태평양 왕복) ④ 지도 SDK
+**preload**(`lib/kakaoSdk.js`) ⑤ ⭐ 카드 ㎡→평 · "+0.0%" → 보합 ⑥ **PWA**(`app/manifest.js`). 테스트 181→200.
 남은 백로그·세부 진척은 `PROGRESS.md`.
 
 **활용 루틴** (설계 의도 — 이 앱은 "탐색"이 아니라 "반복 확인" 도구):
@@ -146,7 +151,7 @@ effect로 분리(`ready` → `booted`). 실측 trades 출발 1,749→**411ms**, 
   - **모바일 시트(2026-09-29 재구성, 원형은 07-25)**: 상단 = 고정 높이 **1줄 바**(`MobileShell.MobileTopBar` — 짧은 요약 + 🔄 + ⚙️), 바닥 = **지도 시트**(`map/MapSheet.js` — 목록 `listSnap: peek|half|full`, 상세는 그 위에 쌓임), ⚙️ = 백드롭 있는 **설정 시트**(`settingsOpen`). 설정이 열리면 지도 시트를 렌더하지 않는다 = **겹침 구조적 불가**(예전 단일 슬롯 `sheet`의 성질 유지 — 그땐 상세가 목록을 *대체*해 닫으면 빈 지도로 떨어졌다). 상세 열림 = `history.pushState({...history.state, reSheet})` → 뒤로가기가 상세를 닫는다(⚠️ `history.state`를 펼칠 것 — Next 상태가 빠지면 popstate에서 새로고침). 모바일 `selectComplex`는 핀보다 `innerHeight/4` 아래를 panTo 목표로 잡아 핀이 시트 위 빈 영역에 온다(실측 핀 top 169px/844). ⚠️ z-index는 `mapStyles.Z`(MAP/TOPBAR/BACKDROP/SHEET/PANEL/TABBAR/MODAL) **상수로만** — 새 오버레이는 반드시 등록. 시트·📍·패널은 `TABBAR_H`(56) + safe-area 위에 앉는다. ⚠️ `mobileSheet`에 `boxSizing:"border-box"` 필수(globals.css에 전역 리셋 없어 `maxHeight`가 패딩 26px 제외 → 70vh 초과, 2026-07-25 실측). ⚠️ 세부패널 `closeBtn`(absolute)은 시트에서 좌표가 어긋나 `!isMobile`일 때만 렌더 — 모바일은 백드롭 탭/그립으로 닫음. ⚠️ `controlPanelContent` 안에 넣은 UI는 **모바일에서 ⚙️ 시트를 열어야만 보인다** — 상시 노출이 필요한 알림/배너는 시트 밖(상단 바 아래)에 별도 렌더할 것(부대비용 안내 배너가 이 이유로 모바일에서 안 보임 — 2026-07-25 사용자 확인 후 **그대로 두기로 결정**, 고치지 말 것. 새로 만드는 알림에만 적용할 규칙)
   - ⚠️ 지도 위 떠 있는 버튼(📍 현위치 등)은 **데스크톱에서 `right` 정렬 금지** — 세부패널(`right:14, width:320`, 전체높이)이 덮어 클릭이 안 된다(2026-07-29 실측 `clickable:false`). 좌우 패널 사이 빈 지도 영역(`left:368`)에 두고, 모바일은 시트가 **닫혔을 때만** 우하단에 렌더
   - ⚠️ `controlPanelContent`·`detailContent`처럼 JSX를 **변수로 뺄 때는 null 가드 필수** — JSX는 생성 시점에 children 표현식이 평가되므로 `const detailContent = selected && detail && (…)` 없이 두면 `selected.aptNm`이 터진다(렌더 안 `{selected && …}`에 감싸여 있을 때는 안전했음). 빌드의 prerender 단계가 잡아준다
-  - 좌측 패널 = **네이버식 단지 리스트**(데스크톱 전체높이 / 모바일은 시트 `list` 슬롯) — `listRows` useMemo(**`tradesData` 반응형 사본** 기반, dataRef 아님) + 정렬 6종 + 배지(🔥상승률 15%↑·🏗준공30년↑·✓자금여유), 세대수는 상위 30행만 lazy(중복방지 `infoInflightRef` Set은 **요청 settle 시 finally로 해제 필수** — 안 하면 rank 도착으로 `listRows`가 로드 직후 바뀌며 조회가 중단→키가 남아 세대수가 세션 내내 안 뜸, 2026-07-21 수정)
+  - 좌측 패널 = **네이버식 단지 리스트**(데스크톱 전체높이 / 모바일은 시트 `list` 슬롯) — `listRows` useMemo(**`tradesData` 반응형 사본** 기반, dataRef 아님) + 정렬 6종 + 배지(🔥상승률 15%↑ **그리고 지역 중앙값 +10%p↑** — `mapFilters.isHotYoy`, 행의 `hot` 필드·🏗준공30년↑·✓자금여유), 세대수는 상위 30행만 lazy(중복방지 `infoInflightRef` Set은 **요청 settle 시 finally로 해제 필수** — 안 하면 rank 도착으로 `listRows`가 로드 직후 바뀌며 조회가 중단→키가 남아 세대수가 세션 내내 안 뜸, 2026-07-21 수정)
   - 모바일 분기는 `isMobile`(matchMedia 640px)+인라인스타일 스프레드(미디어쿼리 아님). 시트 안에 들어가는 패널은 `bare`(position:static·배경/그림자 제거) 스프레드로 껍데기를 벗김
   - 세부패널은 **평형 카드가 추세 선택기** — 카드 클릭 시 그 카드 안에 추세차트 인라인(`trendArea`+`trendMonths` 12/36), 별도 "시세 추세" 섹션 없음
   - ⚠️ 컨트롤 패널은 **세로 flex 전체높이** — 직계 자식 공유 스타일에 `flex:1` 금지(세로로 성장, 시군구 select 304px 사고 2026-07-03; 가로 행에서만 사용처에서 덧씌울 것)
@@ -177,6 +182,11 @@ effect로 분리(`ready` → `booted`). 실측 trades 출발 1,749→**411ms**, 
   - ⚠️ 실거래 코드는 **법정동 시군구 5자리** — **부천(41190)·화성(41590) 상위코드는 0건**이라 구별 코드로 등록(부천 4119x 3구 / 화성 2025신설 4159x 4구). 월 수집은 `fetchRawMonths` 일괄(캐시 `.in()` 1회 + 미스 전량 동시 — 국토부는 동시 호출 스로틀 없음, 실측 동시36=4.7s가 최속) — 미스는 `allSettled`(한 달 실패해도 나머지 살림, 전량 실패 시에만 throw→502), 반환에 `latestFetched`(최근 fetched_at) 포함 → `/api/trades` 신선도는 별도 쿼리 없이 사용(2026-07-21)
   - API(브리핑): `/api/briefing`(즐겨찾기 단지 최근 30일 거래 + D-30 내 일정 + **시장 신호 + 새 거래 피드**) — ⚠️ **캐시 전용**(`fetchRawMonths(.., {cacheOnly:true})`)이라 외부 API를 **호출하지 않는다**. cron이 채워둔 `trade_raw_cache`만 읽고, 없는 지역은 조용히 생략. 변동률은 **같은 평형의 직전 거래**와 비교(평형이 다르면 무의미). ⚠️ `MONTHS=4`를 줄이지 말 것 — `buildSignal`의 prev 창이 `asOf−90일`까지 내려가고 90일은 최악의 경우 달력월 4개를 걸친다. 짧으면 prevCount만 저평가돼 delta가 항상 "급증"으로 보인다(2026-08-03에 2→3, 08-04에 3→4). ⚠️ 피드 상한(60건)에서 **★ 단지 거래를 먼저 담는다** — 그냥 최신순으로 자르면 기본 탭인 ★가 통째로 빈다(실측: 최신 60건이 전부 7/30~8/01, ★ 거래는 7/07~7/18이라 컷 밖)
   - **브리핑 페이로드 캐시**(`briefing_cache` 0008, 2026-08-07): `/api/briefing`은 `lib/briefing.js`의 `getBriefing()`만 호출한다 — 지문(`favorites` 6필드 + 대상 행 `max(fetched_at)` + KST 날짜)이 일치하면 저장된 payload를 그대로 반환(prod 실측 미스 1.9~2.6s → 히트 0.67~1.1s, 한국→Vercel 왕복 포함). ⚠️ **지문 계산 경로는 하나여야 한다** — cron 워밍도 같은 `getBriefing()`을 부른다. 두 곳에서 각자 조립하면 재료 하나만 어긋나도 캐시가 영원히 미스가 되고, 조용히 느려질 뿐이라 눈치채기 어렵다. ⚠️ `buildFingerprint`의 `FAV_FIELDS`는 **payload가 실제로 읽는 favorites 필드와 같아야** 한다(payload가 새 필드를 읽으면 여기에도 추가 — 안 그러면 그 변경이 화면에 안 뜬다). ⚠️ **payload 모양을 바꿨으면 `PAYLOAD_VERSION`을 올릴 것**(2026-08-14 신설). 지문 재료는 "입력"(★·수집시각·날짜)뿐이라 **코드 변경은 지문을 못 바꾼다** — `buildBriefingPayload`를 고쳐 배포해도 저장된 옛 payload가 그대로 나가고, KST 날짜가 넘어가는 다음날 06:00 cron까지 최대 하루를 기다려야 했다(캐시 도입 08-07 ~ 08-14 사이 이 탈출구가 아예 없었다). "배포했는데 브리핑이 그대로"면 청크 해시를 뒤지기 전에 **여기부터 볼 것**. 버전을 올리면 다음 요청 한 번만 라이브 계산(1.9~2.6s)하고 다시 캐시에 앉는다. `tests/briefingCache.test.mjs`의 golden 해시가 재료 조합을 고정한다(버전을 올리면 그 기대값도 갱신). ⚠️ 캐시 계층 실패(테이블 부재·조회 실패·지문 실패)는 **전부 라이브 계산 폴백** — 반대로 기울면 조용히 틀린 화면이 된다. ⚠️ cron 워밍은 **추세 워밍보다 앞**에 둘 것(`/api/cron/refresh`) — 추세 워밍은 40s 데드라인으로 미완주분을 다음 실행에 넘기는 양보 가능한 작업이라, 뒤에 두면 영영 안 돈다. ⚠️ 서버 D-day(`upcoming.dday`)는 `daysBetweenYmd(kstDate(), ymd)` — 예전 `setHours(0,0,0,0)` 기준은 Vercel(UTC)에서 KST 00:00~09:00에 하루 크게 나오고, 캐시하면 그 오차가 온종일 고정된다. ⚠️ 캐시 히트 payload는 계산분과 **내용은 같지만 최상위 키 순서가 뒤집힌다**(jsonb 라운드트립, 2026-08-07 prod 실측) — 검증할 때 `JSON.stringify` 비교는 항상 false다. `deepStrictEqual`로 볼 것
+  - **엣지 캐시**(`lib/httpCache.js`, 2026-10-05): `/api/hot·news·subscription·rank·trades`는 `cachedJson()`으로
+    `s-maxage=600, stale-while-revalidate=3600`. 근거: 응답이 `icn1::iad1` — 함수가 **미국 동부**이고 Supabase도
+    미국 쪽(한국 직접 조회 530ms)이라 **함수 리전을 서울로 옮기면 DB가 멀어져 더 느려진다**. ⚠️ TTL을 하루로 늘리지 말 것
+    — 아침 브리핑이 어제 것으로 굳는다(최악이 지금은 "한 번 1시간 낡음"). ⚠️ **사용자·★ 의존 응답(favorites·briefing),
+    `refresh=1`, 오류 응답엔 붙이지 말 것** — 오류가 엣지에 앉으면 고친 뒤에도 한 시간 나간다. 새 공용 GET 라우트는 이걸 쓸 것
   - **시장 신호**(`lib/marketSignal.js` `buildSignal`): 지표 4종(거래량·계약 해제·직거래 비중·법인 순매수). ⚠️ **창을 신고 기한(30일)만큼 뒤로 물린다**(`REPORT_LAG_DAYS`) — 실거래 신고 기한이 계약 후 30일이라 "최근 30일 계약분"은 구조적으로 미완성이고, 보정 없이 직전 창과 비교하면 **매일 모든 지역이 −55~−65% "거래량 급감"**으로 뜬다. 근거는 41173 캐시의 계약일 10일 단위 분포(신고 끝난 5·6월은 평탄 212/172/255·168/124/140, 진행 중 7월만 114→50→19 급락, 2026-08-04 실측). `window`를 함께 반환해 카드 헤더가 "최근 30일"이 아니라 실제 창을 찍는다. ⚠️ 법인 지표는 `buyerGbn`에 **값이 있을 때만**(`corporate.available`) — 0으로 표시하면 "법인 거래 없음"이라는 거짓말이 된다(2026-08-03엔 태그가 안 왔으나 **2026-09-29 실측: 값이 채워져 온다**(`공공기관`·`개인` 등) — 옛 캐시 행엔 여전히 없다). ⚠️ 🆕 새 거래 피드는 반대로 **최근 30일 그대로** — 비교가 아니라 "새로 들어온 것"이라 지연이 곧 신선도다
   - **시세 정확도 단일 지점**: `fetchRawMonths`가 캐시/수집분을 반환할 때 `excludeAbnormal()`로 **해제·직거래를 걷어낸다** → 이 함수를 거치는 네 라우트(`/trades`·`/trend`·`/rank`·`/briefing`)가 같은 기준을 공유한다. 제외 기준을 바꾸려면 여기 한 곳만. ⚠️ 캐시에는 **원본 그대로** 저장하고 걸러내기는 읽을 때 한다(기준이 바뀌어도 재수집 불필요). 필드가 없는 옛 캐시 행은 `lacksDealFlags()`가 미스로 돌려 **자가 재수집**(마이그레이션 없음). ⚠️ `lacksDealFlags`에 **`buyerGbn` 검사를 넣지 말 것**(2026-08-03에 넣으려다 철회) — 실측상 캐시 781행 중 `buyerGbn` 보유 0이라 전량이 stale이 되는데 `/api/briefing`은 `cacheOnly`라 재수집을 못 해 **기존 ⭐관심단지 브리핑까지 빈다**. 법인 필드 부재는 `corporate.available=false`가 이미 정확히 처리한다. ⚠️ 해제는 거래 후 나중에 발생하므로 과거 달 캐시는 늦게 반영된다 — cron이 최근 2개월만 재수집하는 게 현실적 타협. ⚠️ `excludeAbnormal()`은 걸러낸 거래를 **사유와 함께 `removed`로 반환**하고 `fetchRawMonths`가 실어 보낸다 — 시장 신호의 원천이 이것이다(시세에서 빼는 건 맞지만, 뺀 것 자체가 신호). 반환 형태를 바꾸면 신호가 빈다
   - API(실거래·단지): `/api/trades`(N개월 병합, 응답에 `excluded{cancelled,direct}`·단지별 `naverName`) · `/api/trend`(월별 추세 — 대표값은 **중앙값 `value`**, `avg`도 같이 반환. 한 평형의 월 거래가 1~3건이라 평균은 특수거래 하나에 통째로 끌려간다. `area`로 평형별, `months` 최대 36=3년) · `/api/favorites`(CRUD + PATCH=D-day 필드, 0004 컬럼 부재 시 GET 폴백·PATCH 409 graceful) · `/api/complex-info`(세대수/동수) · `/api/rank`(단지별 1년 상승률 — 최근 3개월 vs 12~14개월 전 ㎡당가, 창별 2건 미만 null)
@@ -239,6 +249,12 @@ effect로 분리(`ready` → `booted`). 실측 trades 출발 1,749→**411ms**, 
 - ⚠️ 한글 커밋 메시지는 PowerShell here-string(`git commit -m @'...'@`)이 괄호·특수문자에서 깨져 실패 → 임시파일에 쓰고 `git commit -F <file>` (검증됨). 임시파일은 **Write 도구**로 쓸 것 — PS5.1 `Set-Content -Encoding utf8`은 **BOM을 붙여 커밋 제목 첫머리에 U+FEFF가 박힘**(2026-07-02 실제 발생). 경로는 `.git\COMMIT_MSG_TMP.txt`처럼 **.git 폴더 안**에 두면 git status에 안 잡혀 오염 없음(이전 세션 잔재가 남아 있으니 Write 전 Read 필요)
 - ⚠️ PowerShell `Invoke-WebRequest .Content`는 한글 JSON을 코드페이지로 잘못 디코드 → **.NET 문자열 자체가 깨짐**(콘솔 표시뿐 아님). 읽은 한글 값을 **재요청에 쓰면 서버 매칭 실패**(추세가 0건처럼 보임) → 한글 round-trip 검증은 `node` fetch로
 ### 그 외 구현 메모
+- 지도 SDK URL은 `lib/kakaoSdk.js` **한 곳**(2026-10-05) — `app/layout.js`가 react-dom `preload`로 HTML 파싱 시점에 받기
+  시작하고 `KakaoMap`이 같은 URL로 `<script>`를 꽂는다. ⚠️ 두 URL이 어긋나면 SDK를 두 번 받는다. ⚠️ `<link rel=preload>`를
+  JSX로 쓰지 말 것 — React 19가 호이스팅하며 원래 자리에도 남겨 두 번 찍혔다. 실측: 첫 fetch→첫 타일 2,030→635ms(4x 감속)
+- **PWA**(2026-10-05): `app/manifest.js`(standalone) + `app/apple-icon.png` + `public/icon-{192,512}.png`(`app/icon.svg` 디자인을
+  PNG로 렌더). 서비스 워커는 **일부러 없다**(낡은 시세 화면이 더 해롭다). ⚠️ iOS 홈 화면 앱은 Safari와 localStorage가 분리 —
+  자금 설정을 한 번 다시 입력해야 한다. `appleWebApp.statusBarStyle`은 `default` 유지(black-translucent면 상단 바가 노치 밑으로)
 - 지도: SDK URL에 `&libraries=services` 필요. 좌표→지역은 `geocoder.coord2RegionCode`(대문자 R·C, 오타 주의)
 - `/api/trades`는 단지별 `trades[]`(area 포함) 전체 반환 → 면적 등 추가 필터는 재요청 없이 클라(`KakaoMap.js`의 `renderMarkers`)에서 처리
 

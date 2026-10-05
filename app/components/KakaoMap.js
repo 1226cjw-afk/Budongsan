@@ -11,9 +11,10 @@ import { useShell } from "./AppShell";
 import { PROFILE_EVENT } from "./useLoanProfile";
 import {
   AREA_FILTERS, PRICE_FILTERS, MONTHLY_FILTERS, bandFor,
-  HOT_PCT, SORT_OPTIONS, SORT_GAP, matchesComplexName, resolveFocus,
+  SORT_OPTIONS, regionYoyMedian, SORT_GAP, matchesComplexName, resolveFocus,
 } from "../lib/mapFilters";
 import { bestFit, buildComplexRows, sortComplexRows } from "../lib/complexRows";
+import { KAKAO_SDK_URL } from "../lib/kakaoSdk";
 import HelpModal from "./HelpModal";
 import { MobileTopBar, MobileSheet } from "./MobileShell";
 import ControlPanel from "./map/ControlPanel";
@@ -265,10 +266,7 @@ export default function KakaoMap() {
   }, [ready, myLoc]);
 
   // 지역 1년 상승률 중앙값 — 선반영 게이지 기준선(단지 상승률 − 중앙값 = 지역 대비 초과상승 %p).
-  const rankMedian = useMemo(() => {
-    const vals = [...rank.values()].map((r) => r.yoyPct).filter((v) => v != null).sort((a, b) => a - b);
-    return vals.length >= 5 ? vals[Math.floor(vals.length / 2)] : null; // 표본 적으면 비표시
-  }, [rank]);
+  const rankMedian = useMemo(() => regionYoyMedian(rank), [rank]);
 
   const isSelectedFav = selected
     ? favSet.has(favKey(lawdCd, selected.umdNm, selected.aptNm))
@@ -416,7 +414,6 @@ export default function KakaoMap() {
   // 지도 초기화 (1회) — services 라이브러리로 좌표→지역 변환 + 빈 곳 클릭→가까운 단지.
   // ⚠️ 이 effect는 위 부트스트랩보다 **뒤에** 선언돼 있어야 한다(initialViewRef를 읽는다).
   useEffect(() => {
-    const KEY = process.env.NEXT_PUBLIC_KAKAO_MAP_KEY;
     const SCRIPT_ID = "kakao-map-sdk";
 
     function initMap() {
@@ -500,7 +497,7 @@ export default function KakaoMap() {
     const script = document.createElement("script");
     script.id = SCRIPT_ID;
     script.async = true;
-    script.src = `//dapi.kakao.com/v2/maps/sdk.js?appkey=${KEY}&autoload=false&libraries=services`;
+    script.src = KAKAO_SDK_URL; // ⚠️ layout의 preload와 같은 URL이어야 한다(lib/kakaoSdk.js)
     script.addEventListener("load", initMap);
     document.head.appendChild(script);
     return () => script.removeEventListener("load", initMap);
@@ -880,7 +877,7 @@ export default function KakaoMap() {
       const buyable = affordMode ? r.buyable : null;
       if (buyable) buyableCount += 1;
 
-      const hot = r.yoy != null && r.yoy >= HOT_PCT; // 1년 급등 단지는 핀에도 🔥
+      const hot = r.hot; // 1년 급등(지역 대비 상대 기준, buildComplexRows) 단지는 핀에도 🔥
       let cls = "trade-pin";
       if (buyable === true) cls += " trade-pin--ok";
       else if (buyable === false) cls += " trade-pin--no";

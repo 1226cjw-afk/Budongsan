@@ -29,6 +29,7 @@ export const upTag = { ...tagBase, color: "#b45309", background: "#fef9c3" };
 export const downTag = { ...tagBase, color: "#1d4ed8", background: C.blueSoft };
 export const okTag = { ...tagBase, color: "#047857", background: "#dcfce7" };
 export const noTag = { ...tagBase, color: "#be123c", background: "#ffe4e6" };
+export const flatTag = { ...tagBase, color: C.sub, background: C.divider };
 export const emptyHint = {
   background: "#fff", borderRadius: 14, border: `1px solid ${C.border}`,
   boxShadow: CARD_SHADOW, padding: "14px 16px",

@@ -3,6 +3,7 @@
 // 평형 구성이 달마다 달라도 ㎡당가로 정규화해 비교. 창별 거래가 적으면(yoyPct=null) 표시 제외.
 
 import { fetchRawMonths, monthsBack, currentYmd } from "../../lib/trades";
+import { cachedJson } from "../../lib/httpCache";
 
 const WINDOW = 3; // 비교 창(개월): 최근 3개월 vs 12개월 전 3개월
 const MIN_COUNT = 2; // 창별 최소 거래 수 — 미만이면 상승률 신뢰 불가 → null
@@ -56,7 +57,7 @@ export async function GET(request) {
     };
   });
 
-  return Response.json({
+  return cachedJson({ // 엣지 캐시 — lib/httpCache.js
     lawdCd,
     recentMonths: recentYmds,
     pastMonths: pastYmds,

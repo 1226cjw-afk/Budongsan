@@ -2,7 +2,7 @@
 
 // 🔥 핫플 단지 — 새로 신고된 거래가 몰린 단지(오늘 / 이번 주) + 칩(종합·거래·가격·뉴스).
 // 원료: /api/hot(trade_reports 집계, 서울+경기 전역) + buildNewsWatch(뉴스 요주의 단지).
-// 순위는 lib/hotRank.rankHot — ⚠️ 가점·임계값은 임시값(7일치 쌓이면 실측으로 확정).
+// 순위는 lib/hotRank.rankHot — 가점·임계값은 2026-10-05 실측 확정(근거는 그 파일 머리 주석).
 //
 // ⚠️ 이 카드는 📢 요주의 단지 카드를 흡수했다(2026-09-29). 그 카드의 규칙을 그대로 상속한다:
 //    ① **★가 0개여도 반드시 렌더** — ★를 담게 만드는 입구다(Briefing 빈 상태 분기 참조)
@@ -11,7 +11,7 @@
 //    ③ 지역을 못 정한 뉴스 단지는 이동 버튼을 감춘다(틀린 곳으로 보내느니 기사만).
 
 import { useMemo, useState } from "react";
-import { rankHot, HOT_PRICE_MIN_REPORTS } from "../../lib/hotRank";
+import { rankHot, priceJump, HOT_TODAY_MIN, HOT_JUMP_BONUS } from "../../lib/hotRank";
 import { loanCalcFor } from "../../lib/loanPolicy";
 import { formatManwon } from "../../lib/format";
 import { toPyeong } from "../../lib/tradeStats";
@@ -27,12 +27,14 @@ const FOLD = 5;
 
 export default function HotCard({ hot, watch, profile, assets, hasIncome, onFocus }) {
   const todayN = hot?.today?.complexes?.length || 0;
+  const todayTotal = hot?.today?.total || 0;
   const weekN = hot?.week?.complexes?.length || 0;
-  // null = 자동. 첫 배포 후 며칠은 오늘이 비어 있다 → 이번 주, 둘 다 비면 뉴스 칩.
+  // null = 자동. 오늘이 비거나 얇으면(주말·공휴일 — 국토부 공개가 쉰다) 이번 주, 둘 다 비면 뉴스 칩.
   const [win, setWin] = useState(null);
   const [chip, setChip] = useState(null);
   const [open, setOpen] = useState(false);
-  const w = win ?? (todayN ? "today" : "week");
+  const thinToday = todayTotal < HOT_TODAY_MIN;
+  const w = win ?? (todayN && !(thinToday && weekN) ? "today" : "week");
   const ch = chip ?? (todayN || weekN ? "total" : "news");
 
   const loanFor = useMemo(() => loanCalcFor(profile, assets), [profile, assets]);
@@ -65,6 +67,9 @@ export default function HotCard({ hot, watch, profile, assets, hasIncome, onFocu
           </span>
         </div>
 
+        {w === "today" && thinToday && todayN > 0 && (
+          <div style={noteRow}>오늘은 새 신고가 {todayTotal}곳뿐이에요 — 주말·공휴일엔 국토부 공개가 쉬어요.</div>
+        )}
         {hot === null ? (
           <div style={emptyRow}>불러오는 중…</div>
         ) : shown.length === 0 ? (
@@ -81,7 +86,7 @@ export default function HotCard({ hot, watch, profile, assets, hasIncome, onFocu
               <NewsRow key={r.key} n={r.news} i={i} onFocus={onFocus} />
             ) : (
               <TradeRow
-                key={r.key} r={r} i={i} onFocus={onFocus}
+                key={r.key} r={r} i={i} onFocus={onFocus} chip={ch}
                 loanFor={loanFor} assets={assets} hasIncome={hasIncome}
               />
             )
@@ -93,18 +98,23 @@ export default function HotCard({ hot, watch, profile, assets, hasIncome, onFocu
             {open ? "접기" : `더보기 (${rows.length - FOLD})`}
           </button>
         )}
-        <div style={footnote}>12억 미만 거래 · 신고일 기준 · 해제·직거래 제외</div>
+        <div style={footnote}>12억 미만 거래 · 신고일 기준 · 해제·직거래 제외 · 가격은 신고 2건↑ 중앙값</div>
       </div>
     </section>
   );
 }
 
-function TradeRow({ r, i, onFocus, loanFor, assets, hasIncome }) {
+// 가격 배지는 가점을 받는 상승(5%↑)만 — +1.2% 같은 값을 노란 배지로 찍으면 소음이다(2026-10-05 실측 화면).
+// 단 가격 칩에선 %가 정렬 기준이라 늘 보인다.
+const JUMP_SHOW_MIN = Math.min(...HOT_JUMP_BONUS.map((b) => b.pct));
+
+function TradeRow({ r, i, onFocus, loanFor, assets, hasIncome, chip }) {
   const x = r.c;
   const latest = x.latest;
   const ln = hasIncome && latest?.amount ? loanFor(latest.amount, { lawdCd: x.lawdCd, area: latest.area }) : null;
   const gap = ln && ln.maxLoan > 0 ? assets - ln.requiredCash : null;
-  const jump = x.jump && x.jump.pct > 0 && x.reports >= HOT_PRICE_MIN_REPORTS ? x.jump : null;
+  const pj = priceJump(x);
+  const jump = pj && (chip === "price" || pj.pct >= JUMP_SHOW_MIN) ? pj : null;
   return (
     <button
       onClick={() => onFocus({ lawdCd: x.lawdCd, aptNm: x.aptNm, umdNm: x.umdNm })}
@@ -123,7 +133,11 @@ function TradeRow({ r, i, onFocus, loanFor, assets, hasIncome }) {
       </div>
       <div style={rowBadges}>
         <span style={reportTag}>신고 {x.reports}건</span>
-        {jump && <span style={upTag}>{jump.pyeong}평 직전 대비 +{jump.pct}%</span>}
+        {jump && (
+          <span style={upTag}>
+            {jump.pyeong ? `${jump.pyeong}평 ` : ""}시세 대비 +{jump.pct}%
+          </span>
+        )}
         {r.newsHit && <span style={newsTag}>뉴스 {r.newsHit.articles}건</span>}
         {gap != null && (
           <span style={gap >= 0 ? okTag : noTag}>
@@ -192,6 +206,7 @@ const moreBtn = {
   display: "block", width: "100%", padding: "9px 15px", border: "none", borderTop: `1px solid ${C.divider}`,
   background: "#fff", color: C.blue, fontSize: 12, fontWeight: 700, cursor: "pointer",
 };
+const noteRow = { padding: "8px 15px 0", fontSize: 11.5, color: C.muted, lineHeight: 1.5 };
 const emptyRow = { padding: "14px 15px", fontSize: 12, color: C.muted, lineHeight: 1.6 };
 const footnote = {
   padding: "8px 15px", borderTop: `1px solid ${C.divider}`,

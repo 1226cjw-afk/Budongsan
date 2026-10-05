@@ -12,7 +12,7 @@
 // ⚠️ 확장자 import 유지 — raw node(npm test)가 확장자 없는 경로를 못 찾아 ERR_MODULE_NOT_FOUND로
 //    죽는다. 이 파일은 순수 로직이라 테스트 대상이므로 marketSignal.js·news.js와 같은 규칙을 따른다.
 import { favKey, filterTrades, summarize, groupByPyeong } from "./tradeStats.js";
-import { REBUILD_AGE } from "./mapFilters.js";
+import { REBUILD_AGE, regionYoyMedian, isHotYoy } from "./mapFilters.js";
 
 // 한 단지에서 "대출 가능 + 월납 상한 이내"인 평형 중 자금 여유가 최대인 것.
 // 반환 {gap, monthly} — 조건을 만족하는 평형이 없으면 null.
@@ -47,6 +47,7 @@ export function buildComplexRows({
   thisYear = new Date().getFullYear(),
 }) {
   const rows = [];
+  const yoyMedian = regionYoyMedian(rankMap); // 🔥는 지역 대비 상대 기준(mapFilters.isHotYoy)
   for (const c of complexes || []) {
     const hits = filterTrades(c.trades, areaBand, priceBand);
     const stat = summarize(hits);
@@ -55,6 +56,7 @@ export function buildComplexRows({
     const gap = fit ? fit.gap : null;
     const key = favKey(lawdCd, c.umdNm, c.aptNm);
     const buildYear = Number(hits[0]?.buildYear) || null;
+    const yoy = rankMap?.get(`${c.umdNm}|${c.aptNm}`)?.yoyPct ?? null;
     rows.push({
       c,
       key,
@@ -62,7 +64,8 @@ export function buildComplexRows({
       price: priceBasis === "recent" ? stat.recentAmount : stat.avg,
       avg: stat.avg,
       count: stat.count,
-      yoy: rankMap?.get(`${c.umdNm}|${c.aptNm}`)?.yoyPct ?? null,
+      yoy,
+      hot: isHotYoy(yoy, yoyMedian), // 🔥 — 마커·리스트가 같은 판정을 본다
       buildYear,
       rebuild: buildYear != null && thisYear - buildYear >= REBUILD_AGE,
       gap,

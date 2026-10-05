@@ -10,10 +10,12 @@
 import { loanCalcFor } from "../../lib/loanPolicy";
 import { formatManwon, shortDate } from "../../lib/format";
 import { regionName } from "../../lib/regions";
+import { toPyeong } from "../../lib/tradeStats";
+import ChangeTag from "./ChangeTag";
 import { isNew, complexKey } from "../../lib/briefingSeen";
 import {
   card, cardHead, headSub, row, rowDivider, rowTop, rowName, rowPrice, rowMeta,
-  rowBadges, upTag, downTag, okTag, noTag, rowBtn,
+  rowBadges, okTag, noTag, rowBtn,
 } from "./styles";
 
 export default function FavoriteCard({ complexes, seen, profile, assets, hasIncome, onFocus }) {
@@ -46,17 +48,12 @@ export default function FavoriteCard({ complexes, seen, profile, assets, hasInco
                 <span style={rowPrice}>{formatManwon(top.amount)}</span>
               </div>
               <div style={rowMeta}>
-                {regionName(c.lawdCd)} {c.umdNm} · {Math.round(top.area)}㎡ ·{" "}
+                {regionName(c.lawdCd)} {c.umdNm} · {toPyeong(top.area)}평 ·{" "}
                 {shortDate(top.dealDate)} 계약
                 {c.recent.length > 1 && ` · 30일간 ${c.recent.length}건`}
               </div>
               <div style={rowBadges}>
-                {chg != null && (
-                  <span style={chg >= 0 ? upTag : downTag}>
-                    직전 {formatManwon(c.prevAmount)} 대비 {chg >= 0 ? "+" : ""}
-                    {chg.toFixed(1)}%
-                  </span>
-                )}
+                <ChangeTag chg={chg} prev={c.prevAmount} />
                 {gap != null && (
                   <span style={gap >= 0 ? okTag : noTag}>
                     {gap >= 0 ? `✓ 여유 ${formatManwon(gap)}` : `부족 ${formatManwon(-gap)}`}

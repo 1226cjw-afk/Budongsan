@@ -38,8 +38,24 @@ export function bandFor(filters, value) {
 }
 
 // 리스트 패널: 배지 임계값.
-export const HOT_PCT = 15; // 1년 상승률 이 값 이상이면 🔥 급등 배지(핀에도 표시)
-export const EXCESS_HOT_PCT = 10; // 지역 중앙값 대비 초과상승 이 값(%p) 이상이면 선반영 경고 톤
+export const HOT_PCT = 15; // 🔥 급등 배지의 절대 하한(1년 상승률 %) — 아래 isHotYoy 참조
+export const EXCESS_HOT_PCT = 10; // 지역 중앙값 대비 초과상승 이 값(%p) 이상이면 선반영 경고 톤 + 🔥 상대 조건
+
+// 지역 1년 상승률 중앙값 — 🔥 상대 기준과 ⚡ 선반영 게이지의 기준선. 표본 5곳 미만이면 null(비표시).
+export function regionYoyMedian(rankMap) {
+  const vals = [...(rankMap?.values() || [])].map((r) => r.yoyPct).filter((v) => v != null).sort((a, b) => a - b);
+  return vals.length >= 5 ? vals[Math.floor(vals.length / 2)] : null;
+}
+
+// 🔥 급등 = 1년 +15%↑ **그리고** 지역 중앙값보다 +10%p↑.
+// ⚠️ 절대값만 보면 신호가 죽는다(2026-10-05 72개 지역·3,052단지 실측): 지역 전체가 오른 장에선
+//    15%↑가 전체 27.5%, 지역별 p90 76%·최대 92%(안양 동안구 47/58) — 핀이 거의 다 🔥였다.
+//    상대 조건을 더하면 전체 12.8%, 지역별 p50 14%·p90 29%·최대 35%. 뉴스 중요도(2026-08-31)와 같은
+//    원칙 — 절반을 칠하면 색이 아무것도 가리키지 못한다. 중앙값을 못 구하는 작은 지역은 절대값만 본다.
+export function isHotYoy(yoy, median) {
+  if (yoy == null || yoy < HOT_PCT) return false;
+  return median == null || yoy - median >= EXCESS_HOT_PCT;
+}
 export const REBUILD_AGE = 30; // 준공 후 이 연수 이상이면 🏗 재건축 연한 배지 (실제 추진현황 API는 없음 → 연한 기준)
 
 export const SORT_OPTIONS = [

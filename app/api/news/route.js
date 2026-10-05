@@ -4,6 +4,7 @@
 import { isCapitalAreaNews } from "../../lib/news";
 import { kstDate, addDaysYmd } from "../../lib/format";
 import { supabaseAdmin, noDbResponse } from "../../lib/supabaseServer";
+import { cachedJson } from "../../lib/httpCache";
 
 // 목록에 띄우는 기간(오늘 포함 7일). ⚠️ 프루닝(30일)과 다르다 — 프루닝은 fetched_at 기준이라
 // 발행일이 오래된 기사가 DB에 남는다(2026-08-31 실측: 발행일 2024-03월 행이 살아 있었다).
@@ -38,5 +39,5 @@ export async function GET(request) {
     isCapitalAreaNews(it.title, it.description || "")
   );
   // days를 함께 내려 화면 라벨("최근 7일")이 서버 기준과 어긋나지 않게 한다.
-  return Response.json({ items, days: DAYS, since });
+  return cachedJson({ items, days: DAYS, since }); // 엣지 캐시 — lib/httpCache.js
 }

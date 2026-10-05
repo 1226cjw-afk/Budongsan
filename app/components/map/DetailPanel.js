@@ -8,7 +8,7 @@
 
 import { C } from "../../lib/palette";
 import { formatManwon, shortDate } from "../../lib/format";
-import { HOT_PCT, EXCESS_HOT_PCT, REBUILD_AGE } from "../../lib/mapFilters";
+import { EXCESS_HOT_PCT, REBUILD_AGE, isHotYoy } from "../../lib/mapFilters";
 import {
   closeBtn, starBtn, sectionLabel, newsLink, hintLine, noticeBox, linkBtn,
   hotBadge, upBadge, downBadge, rebuildBadge, excessBadge, excessHotBadge,
@@ -20,11 +20,12 @@ import PyeongCard from "./PyeongCard";
 function HeaderBadges({ yoy, rankMedian, rebuild }) {
   if (yoy == null && !rebuild) return null;
   const ex = yoy != null && rankMedian != null ? Math.round(yoy - rankMedian) : null;
+  const hot = isHotYoy(yoy, rankMedian); // 리스트·핀과 같은 판정(lib/mapFilters)
   return (
     <div style={{ display: "flex", gap: 5, marginTop: 6, flexWrap: "wrap" }}>
       {yoy != null && (
-        <span style={yoy >= HOT_PCT ? hotBadge : yoy >= 0 ? upBadge : downBadge}>
-          {yoy >= HOT_PCT ? "🔥 " : ""}1년 {yoy >= 0 ? "+" : ""}{yoy}%
+        <span style={hot ? hotBadge : yoy >= 0 ? upBadge : downBadge}>
+          {hot ? "🔥 " : ""}1년 {yoy >= 0 ? "+" : ""}{yoy}%
         </span>
       )}
       {ex != null && (
