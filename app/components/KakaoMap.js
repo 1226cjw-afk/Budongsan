@@ -2,13 +2,11 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ALL_REGIONS, regionName } from "../lib/regions";
-import { loanCalcFor, isRegulated } from "../lib/loanPolicy";
-import { C } from "../lib/palette";
-import { kstDate, formatManwon } from "../lib/format";
-import { favKey, distMeters, summarize, groupByPyeong } from "../lib/tradeStats";
+import { isRegulated } from "../lib/loanPolicy";
+import { kstDate, kstYm } from "../lib/format";
+import { favKey, distMeters } from "../lib/tradeStats";
 import useIsMobile from "./useIsMobile";
 import { useShell } from "./AppShell";
-import { PROFILE_EVENT } from "./useLoanProfile";
 import {
   AREA_FILTERS, PRICE_FILTERS, MONTHLY_FILTERS, bandFor,
   SORT_OPTIONS, regionYoyMedian, SORT_GAP, matchesComplexName, resolveFocus,
@@ -21,6 +19,13 @@ import ControlPanel from "./map/ControlPanel";
 import MapSheet from "./map/MapSheet";
 import ComplexList from "./map/ComplexList";
 import DetailPanel from "./map/DetailPanel";
+import useMapProfile from "./map/useMapProfile";
+import useFavorites from "./map/useFavorites";
+import useBackToClose from "./map/useBackToClose";
+import useComplexDetail from "./map/useComplexDetail";
+import useHouseholds from "./map/useHouseholds";
+import { syncMarkers, MAP_CSS } from "./map/markers";
+import { readDeepLink, markLinkConsumedOnLeave, readSavedView, writeSavedView } from "./map/viewStorage";
 import {
   controlPanel, detailPanel, locateBtn, regionToastBox, regionToastBtn, TABBAR_H, SNAP_H,
 } from "./mapStyles";
@@ -28,10 +33,12 @@ import {
 // 카카오맵 + 국토부 실거래가. 지도 이동 시 중심 지역을 자동 인식해 그 시군구 데이터를 로드하고,
 // 단지 클릭(또는 지도 빈 곳 클릭→가까운 단지) 시 우측 패널에 평형별 시세·대출 분석을 보여준다.
 //
-// 이 파일에 남긴 것: 지도 SDK·상태·데이터 로딩·마커 렌더. 화면 조각은 components/map/에,
-// 순수 파생(행 만들기·정렬)은 lib/complexRows.js에 있다.
-// ⚠️ 새 기능을 넣을 땐 여기 쌓기 전에 분리 가능한지 먼저 볼 것 — 이 파일은 두 번 비대해졌다
-//    (2026-07-12 리팩토링으로 1263줄 → 2026-08-15에 다시 1791줄).
+// 이 파일에 남긴 것: 지도 SDK·지역 판정·지도 이동·데이터 로딩·화면 조립. 나머지는 components/map/에:
+//   화면 조각(ControlPanel·ComplexList·DetailPanel·MapSheet…) · 핀 동기화(markers.js) ·
+//   훅(useMapProfile 자금 · useFavorites ★ · useComplexDetail 세부 · useHouseholds 세대수 ·
+//   useBackToClose 모바일 뒤로가기) · 첫 화면 저장소(viewStorage.js). 순수 파생은 lib/complexRows.js.
+// ⚠️ 새 기능을 넣을 땐 여기 쌓기 전에 분리 가능한지 먼저 볼 것 — 이 파일은 **세 번** 비대해졌다
+//    (2026-07-12 1263줄 → 08-15 1791줄 → 08-30 1156줄 → 10-05 1330줄 → 10-25 분리).
 
 const VALID_CODES = new Set(ALL_REGIONS.map((r) => r.code));
 const DEFAULT_CODE = "41173"; // 안양시 동안구
@@ -46,71 +53,6 @@ const IDLE_SETTLE_MS = 400;
 // ⚠️ 이게 없으면 "지역 선택 → 지도가 그 지역으로 이동 → 그 이동의 idle이 다시 지역을 판정"
 //    하는 자기참조 루프가 생겨, 경계에 걸친 지역은 원래 지역으로 되돌아간다.
 const PROGRAMMATIC_MOVE_MS = 1200;
-const VIEW_KEY = "re_map_view"; // 마지막으로 보던 지도 위치(지역·중심·확대) — 재방문 복원용
-
-const LIST_INFO_TOP = 30; // 세대수 lazy 조회 대상: 정렬 상위 N개 행
-
-// 외부에서 들어온 딥링크(/?lawdCd=11530&q=구로주공). 앱 안(🔥 오늘 탭)에선 focusComplex를 쓴다.
-// ⚠️ 한 번 소비한 링크는 같은 탭 세션에서 다시 발동하지 않는다(LINK_SEEN_KEY). 주소창 정리만으론
-//    부족했다 — 탭 셸에서 <Link href="/">로 돌아오면 Next 라우터가 첫 로드 URL(`/?lawdCd=…`)을
-//    되살린다(2026-09-29 로컬 prod 실측. replaceState 즉시·지연, router.replace 즉시·지연 4가지 모두
-//    실패 — 정적 프리렌더 라우트의 캐시 URL로 보인다). 그 상태로 새로고침하면 딥링크가 다시 발동해
-//    보던 자리에서 끌려간다.
-const LINK_SEEN_KEY = "re_link_seen";
-// ⚠️ useSearchParams가 아니라 location.search를 쓴다 — localStorage와 같은 이유로 마운트
-//    이후에만 읽어야 하고(하이드레이션), App Router에서 useSearchParams는 Suspense 경계를
-//    요구해 이 클라이언트 컴포넌트 하나 때문에 트리를 손대야 한다.
-function readDeepLink() {
-  try {
-    const p = new URLSearchParams(window.location.search);
-    const lawdCd = p.get("lawdCd");
-    if (!lawdCd || !VALID_CODES.has(lawdCd)) return null;
-    if (sessionStorage.getItem(LINK_SEEN_KEY) === window.location.search) return null; // 이미 소비함
-    return { lawdCd, q: p.get("q") || "" };
-  } catch {
-    return null;
-  }
-}
-
-// 마지막으로 보던 지도 위치. 새로고침·재방문 시 그 자리에서 이어 보게 한다.
-// ⚠️ localStorage는 클라이언트에만 있으므로 반드시 마운트 이후(지도 초기화 effect)에만 부른다 —
-//    useState 초기값으로 읽으면 서버 렌더와 어긋나 하이드레이션이 깨진다.
-function readSavedView() {
-  try {
-    const v = JSON.parse(localStorage.getItem(VIEW_KEY) || "null");
-    if (!v || !Number.isFinite(v.lat) || !Number.isFinite(v.lng)) return null;
-    return v;
-  } catch {
-    return null;
-  }
-}
-function writeSavedView(v) {
-  try {
-    localStorage.setItem(VIEW_KEY, JSON.stringify(v));
-  } catch {
-    /* 무시 */
-  }
-}
-
-// 대출 계산용 내 자금 프로필. 단위: 만원(보유자산/연소득/기존상환액), % (금리), 년(만기).
-const PROFILE_KEY = "re_loan_profile";
-const COST_NOTICE_KEY = "re_cost_notice_seen"; // 부대비용 반영 안내를 본 적 있는지
-const DEFAULT_PROFILE = {
-  assets: "",        // 보유자산(여유 현금)
-  income: "",        // 연소득
-  existingDebt: "",  // 기존 대출 연 원리금상환액
-  monthlySaving: "", // 월 저축 가능액 — "얼마 더 모으면 되나" 계산용(선택)
-  householdType: "무주택", // 무주택 | 1주택 | 다주택
-  isFirstTime: false,      // 생애최초 구입
-  rate: "4",         // 실제 대출금리(%)
-  termYears: "40",   // 만기(년) — 주담대 최장 기본(은행/네이버 기본값)
-  // 갈아타기(보유 주택 매도) — owned는 세부패널 평형 카드의 "보유" 토글로 지정.
-  // 지정 시점의 기준가 스냅샷을 저장(재지정하면 최신가로 갱신). 실수령 = 기준가 − 대출잔액 − 보증금.
-  owned: null,          // { lawdCd, umdNm, aptNm, area, priceRecent, priceAvg, capturedYmd }
-  ownedLoanBalance: "", // 매도 시 상환할 대출 잔액(만원)
-  ownedDeposit: "",     // 매도 시 반환할 임차 보증금 정산액(만원)
-  ownedAcquiredYmd: "", // 취득일(잔금일) — 비과세(보유 2년) D-day 계산용
-};
 
 export default function KakaoMap() {
   const { tab, focusRef, gotoMapTab } = useShell();
@@ -118,12 +60,11 @@ export default function KakaoMap() {
   const mapRef = useRef(null);
   const geocoderRef = useRef(null);
 
-  // 오버레이는 key → {overlay, el} 로 재사용한다(전량 파괴/재생성 금지 — renderMarkers 참조).
+  // 오버레이는 key → {overlay, el} 로 재사용한다(전량 파괴/재생성 금지 — map/markers.js 참조).
   const overlaysRef = useRef(new Map());
   const dataRef = useRef(null); // 지도 클릭 핸들러(초기화 때 만든 고정 클로저)가 최신 거래를 참조
   const lawdCdRef = useRef(DEFAULT_CODE); // idle 핸들러가 최신 지역 코드 참조
   const fitRef = useRef(true); // 다음 렌더에서 지도 영역 자동 맞춤 여부
-  const favoritesRef = useRef([]); // 타지역 즐겨찾기 마커용 — 좌표 포함 전체 목록
   const suppressIdleRef = useRef(0); // 코드가 지도를 옮긴 시각 — 지역 재판정 억제 창
   const idleTimerRef = useRef(null); // idle 디바운스 타이머
   const myLocRef = useRef(null); // 현위치 점 오버레이
@@ -140,18 +81,11 @@ export default function KakaoMap() {
   const [loading, setLoading] = useState(false);
   const [lastUpdated, setLastUpdated] = useState(null); // 캐시 갱신 시각(ISO)
   const [selected, setSelected] = useState(null);
-  const [trend, setTrend] = useState({ loading: false, series: null });
-  const [trendArea, setTrendArea] = useState(null); // null=전체, 정수 m2=특정 평형
-  const [trendMonths, setTrendMonths] = useState(12); // 추세 기간: 12(1년) | 36(3년)
-  const [info, setInfo] = useState({ loading: false, data: null }); // 세대수 등 부가정보
-  const [favorites, setFavorites] = useState([]);
   const [showFavs, setShowFavs] = useState(false);
-  const [profile, setProfile] = useState(DEFAULT_PROFILE);
   const [showProfile, setShowProfile] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
   const [priceBasis, setPriceBasis] = useState("recent"); // recent | avg
   const [showCost, setShowCost] = useState(null); // 부대비용 내역 펼친 평형(m2) | null
-  const [showCostNotice, setShowCostNotice] = useState(false);
   const isMobile = useIsMobile(); // 좁은 화면 → 패널을 시트/상단바로
   const [excluded, setExcluded] = useState(null); // {cancelled, direct} 시세에서 뺀 거래 수
   const [regionToast, setRegionToast] = useState(null); // 자동 지역 전환 알림 {from, to}
@@ -169,20 +103,20 @@ export default function KakaoMap() {
   // 모바일 시트: 지도 시트(목록 peek/half/full + 상세 스택)와 ⚙️ 설정 시트(모달). 둘은 동시에 렌더되지 않는다.
   const [listSnap, setListSnap] = useState("peek");
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [householdMap, setHouseholdMap] = useState(new Map()); // favKey → 세대수|null (lazy)
-  const infoInflightRef = useRef(new Set()); // 세대수 조회 중복 방지
 
-  const [favEdit, setFavEdit] = useState(null); // 즐겨찾기 D-day 인라인 편집 {id, leaseEnd, note, noteDate}
-  const [favDdayErr, setFavDdayErr] = useState("");
+  // 내 자금(입력·저장·자기자금·대출 계산기) — map/useMapProfile.js
+  const {
+    profile, updateProfile, hasProfile, assets, affordMode, loanKey, loanForPrice,
+    owned, ownedSalePrice, ownedNet, showCostNotice, dismissCostNotice,
+  } = useMapProfile(priceBasis);
+  // ★ 즐겨찾기 — map/useFavorites.js
+  const favs = useFavorites();
+  const { favorites, favSet } = favs;
+  // 선택 단지의 평형 요약·추세·세대수 — map/useComplexDetail.js
+  const { detail, trend, trendArea, setTrendArea, trendMonths, setTrendMonths, info } =
+    useComplexDetail(selected, lawdCd);
 
   const regionLabel = useMemo(() => regionName(lawdCd), [lawdCd]);
-  const favSet = useMemo(
-    () => new Set(favorites.map((f) => favKey(f.lawd_cd, f.umd_nm, f.apt_nm))),
-    [favorites]
-  );
-  useEffect(() => {
-    favoritesRef.current = favorites;
-  }, [favorites]);
   useEffect(() => {
     lawdCdRef.current = lawdCd;
   }, [lawdCd]);
@@ -192,51 +126,12 @@ export default function KakaoMap() {
     if (isMobile && selected) setListSnap((s) => (s === "peek" ? "half" : s));
   }, [selected, isMobile]);
 
-  // 모바일 뒤로가기 = 상세 닫기(→ 목록). 상세가 열리는 순간 히스토리 한 칸을 쌓는다.
-  // ⚠️ history.state를 펼쳐서 넣을 것 — Next App Router가 자기 상태(__NA 등)를 거기 둔다. 빠지면
-  //    popstate에서 Next가 전체 새로고침을 한다. 우리 키(reSheet)는 그 옆에 얹기만 한다.
-  // ⚠️ 상세가 다른 경로(지역 전환·loadTrades의 setSelected(null))로 닫히면 쌓인 한 칸이 남는다 —
-  //    그 뒤 뒤로가기 한 번은 아무 일도 안 한다(무해). 버튼으로 닫을 땐 closeDetail이 history.back().
-  const detailOpen = isMobile && !!selected;
-  useEffect(() => {
-    if (!detailOpen) return;
-    window.history.pushState({ ...window.history.state, reSheet: "detail" }, "");
-    // ⚠️ 도착한 항목이 여전히 상세면 닫지 않는다 — 상세 위에 설정 시트를 열었다가 뒤로가기로 설정만
-    //    닫는 경우 popstate가 두 리스너에 다 온다.
-    const onPop = () => {
-      if (window.history.state?.reSheet !== "detail") setSelected(null);
-    };
-    window.addEventListener("popstate", onPop);
-    return () => window.removeEventListener("popstate", onPop);
-  }, [detailOpen]);
-  function closeDetail() {
-    if (window.history.state?.reSheet === "detail") window.history.back(); // → popstate → setSelected(null)
-    else setSelected(null);
-  }
-
-  // ⚙️ 설정 시트도 같은 방식 — 뒤로가기 = 설정 닫기. 없으면 홈 화면 북마크(히스토리 1칸)에서 ⚙️를 열고
-  // 뒤로가기하면 앱을 벗어나고, 탭 이동 뒤엔 설정이 열린 채 이전 탭으로 간다(2026-09-29 리뷰 · 실측:
-  // 오늘 → 지도 → ⚙️ → 뒤로 = /news로 가고 설정은 열린 채).
-  const settingsSheetOpen = isMobile && settingsOpen;
-  useEffect(() => {
-    if (!settingsSheetOpen) return;
-    window.history.pushState({ ...window.history.state, reSheet: "settings" }, "");
-    const onPop = () => {
-      if (window.history.state?.reSheet !== "settings") setSettingsOpen(false);
-    };
-    window.addEventListener("popstate", onPop);
-    return () => window.removeEventListener("popstate", onPop);
-  }, [settingsSheetOpen]);
-  function closeSettings() {
-    if (window.history.state?.reSheet === "settings") window.history.back();
-    else setSettingsOpen(false);
-  }
-
-  const detail = useMemo(() => {
-    if (!selected) return null;
-    const ts = selected.trades || [];
-    return { overall: summarize(ts), buildYear: ts[0]?.buildYear, groups: groupByPyeong(ts) };
-  }, [selected]);
+  // 모바일 뒤로가기 = 상세 닫기(→ 목록) · ⚙️ 설정 닫기. 없으면 홈 화면 북마크(히스토리 1칸)에서 뒤로가기가
+  // 앱을 벗어나고, 탭 이동 뒤엔 설정이 열린 채 이전 탭으로 간다(2026-09-29 리뷰 · 실측: 오늘 → 지도 → ⚙️ →
+  // 뒤로 = /news로 가고 설정은 열린 채). 히스토리 규칙은 map/useBackToClose.js 주석.
+  // ⚠️ 선언 순서 유지(상세 → 설정) — popstate 리스너도 이 순서로 붙는다.
+  const closeDetail = useBackToClose(isMobile && !!selected, "detail", () => setSelected(null));
+  const closeSettings = useBackToClose(isMobile && settingsOpen, "settings", () => setSettingsOpen(false));
 
   // 자동 지역 전환 알림은 잠깐만 띄운다(되돌릴 기회만 주고 사라짐).
   useEffect(() => {
@@ -272,33 +167,7 @@ export default function KakaoMap() {
     ? favSet.has(favKey(lawdCd, selected.umdNm, selected.aptNm))
     : false;
 
-  // 대출 계산 입력 — 평형별로 가격만 바꿔 재사용.
-  const incomeNum = Number(profile.income);
-  const hasProfile = incomeNum > 0; // 연소득 없으면 DSR 계산 불가
-  // 갈아타기: 보유 주택 지정 시 예상 매도 실수령(기준가 − 대출잔액 − 보증금)을 자기자금에 합산.
-  // assets가 구매가능 색칠·자금 여유 정렬·평형 카드 비교 전부의 기준이라 여기 한 곳만 바꾸면 전파됨.
-  const owned = profile.owned;
-  const ownedSalePrice = owned
-    ? (priceBasis === "recent" ? owned.priceRecent : owned.priceAvg) || owned.priceRecent || owned.priceAvg || 0
-    : 0;
-  const ownedNet = owned
-    ? Math.max(0, ownedSalePrice - (Number(profile.ownedLoanBalance) || 0) - (Number(profile.ownedDeposit) || 0))
-    : 0;
-  const assets = (Number(profile.assets) || 0) + ownedNet;
   const regulated = isRegulated(lawdCd);
-  const affordMode = hasProfile && assets > 0;
-
-  // 마커·리스트 계산에 실제로 영향을 주는 자금 입력만 추린 키(문자열이라 얕은 비교가 통한다).
-  // ⚠️ profile 객체를 그대로 deps에 넣으면 자금 입력창에 **한 글자 칠 때마다** 객체가 새로 만들어져
-  //    마커 수백 개가 통째로 다시 그려진다 — 입력이 끊기는 주된 원인이었다.
-  const loanKey = [
-    assets, incomeNum, profile.existingDebt, profile.rate,
-    profile.termYears, profile.householdType, profile.isFirstTime,
-  ].join("|");
-
-  // 자금 프로필 → 대출 계산기. 브리핑 카드 3종과 **같은 어댑터**(loanCalcFor)를 쓴다 —
-  // 인자를 손으로 조립하던 시절엔 화면마다 한 필드씩 어긋날 여지가 있었다.
-  const loanForPrice = loanCalcFor(profile, assets);
 
   // 평형 카드 한 장(groupByPyeong의 g)에 대한 대출 계산.
   // ⚠️ **마커/리스트와 세부패널이 반드시 같은 입력을 쓰게** 하려고 한 곳에 모았다 —
@@ -368,7 +237,7 @@ export default function KakaoMap() {
   //    마지막에 보던 지역으로 되돌아가, 링크가 아무 일도 안 한 것처럼 보인다.
   // ⚠️ localStorage·location은 마운트 이후에만 읽는다(useState 초기값 → 하이드레이션 불일치).
   useEffect(() => {
-    const link = readDeepLink();
+    const link = readDeepLink(VALID_CODES);
     const saved = link ? null : readSavedView();
     initialViewRef.current = { link, saved };
 
@@ -387,22 +256,9 @@ export default function KakaoMap() {
       // 딥링크가 다시 발동해 원래 자리로 끌려간다.
       // 한 틱 미룬다 — 자식 effect가 App Router effect보다 먼저 돌아 즉시 부르면 Next가 모르는 변경이 된다.
       // ⚠️ 이 정리는 **첫 화면용**일 뿐이다. 탭 이동 뒤 Next가 옛 URL을 되살리는 건 못 막는다 —
-      //    그래서 재발동 방지는 LINK_SEEN_KEY가 맡는다(readDeepLink 주석 참조).
+      //    그래서 재발동 방지는 viewStorage의 LINK_SEEN_KEY가 맡는다(readDeepLink 주석 참조).
       setTimeout(() => window.history.replaceState(null, "", "/"), 0);
-      // 소비 표시는 **페이지를 떠날 때** 남긴다. 읽는 순간 남기면 dev StrictMode의 effect 2회 실행에서
-      // 두 번째가 링크를 "이미 소비함"으로 보고 버린다.
-      const consumed = window.location.search;
-      window.addEventListener(
-        "pagehide",
-        () => {
-          try {
-            sessionStorage.setItem(LINK_SEEN_KEY, consumed);
-          } catch {
-            /* 무시 */
-          }
-        },
-        { once: true }
-      );
+      markLinkConsumedOnLeave();
     } else if (saved && VALID_CODES.has(saved.lawdCd)) {
       fitRef.current = false; // 복원한 위치를 자동 맞춤(setBounds)이 덮지 않도록
       lawdCdRef.current = saved.lawdCd;
@@ -507,59 +363,6 @@ export default function KakaoMap() {
   // 대기 중인 idle 디바운스 타이머 정리(언마운트 후 setState 방지).
   useEffect(() => () => clearTimeout(idleTimerRef.current), []);
 
-  useEffect(() => {
-    loadFavorites();
-  }, []);
-
-
-  // 내 자금 프로필 복원(로컬 저장).
-  useEffect(() => {
-    try {
-      const saved = localStorage.getItem(PROFILE_KEY);
-      if (saved) setProfile((p) => ({ ...p, ...JSON.parse(saved) }));
-    } catch {
-      /* 무시 */
-    }
-  }, []);
-
-  // 부대비용 반영 안내 — 자금을 설정해 둔 기존 사용자에게만, 최초 1회.
-  // 필요자금이 갑자기 커 보여 "고장났나" 싶은 것을 막는다.
-  useEffect(() => {
-    if (!hasProfile) return;
-    try {
-      if (!localStorage.getItem(COST_NOTICE_KEY)) setShowCostNotice(true);
-    } catch {
-      /* 무시 */
-    }
-  }, [hasProfile]);
-
-  function dismissCostNotice() {
-    setShowCostNotice(false);
-    try {
-      localStorage.setItem(COST_NOTICE_KEY, "1");
-    } catch {
-      /* 무시 */
-    }
-  }
-
-  function updateProfile(patch) {
-    setProfile((p) => {
-      const next = { ...p, ...patch };
-      try {
-        localStorage.setItem(PROFILE_KEY, JSON.stringify(next));
-      } catch {
-        /* 무시 */
-      }
-      return next;
-    });
-  }
-
-  // 오늘·뉴스 탭(keep-alive)이 자금 변경을 따라오게 알린다 — useLoanProfile 주석 참조.
-  // ⚠️ setProfile 업데이터 안에서 쏘지 말 것(렌더 중 다른 컴포넌트 setState 경고) → effect로.
-  useEffect(() => {
-    window.dispatchEvent(new Event(PROFILE_EVENT));
-  }, [profile]);
-
   // 갈아타기: 세부패널 평형 카드에서 보유 주택 지정/해제. 같은 평형 재클릭 = 해제,
   // 이미 보유 지정된 상태에서 다시 지정 = 최신 기준가로 스냅샷 갱신.
   function isOwnedPyeong(g) {
@@ -585,6 +388,13 @@ export default function KakaoMap() {
       // 보유 주택이 생기면 가구유형도 1주택으로 보정(처분조건부 — LTV 규칙은 무주택과 동일).
       ...(profile.householdType === "무주택" ? { householdType: "1주택" } : {}),
     });
+  }
+
+  // 지도에서 고른 단지 ★ 담기/빼기(빼기는 ★ 서랍의 removeFavorite도 있다 — useFavorites 주석).
+  function toggleFavorite() {
+    if (!selected) return;
+    const { umdNm, aptNm, lat, lng } = selected;
+    favs.toggleFavorite({ lawdCd, umdNm, aptNm, lat, lng });
   }
 
   // ⚠️ ready(지도 SDK)가 아니라 booted를 기다린다 — 실거래는 지도와 무관한 데이터라
@@ -622,132 +432,8 @@ export default function KakaoMap() {
     };
   }, [booted, lawdCd]);
 
-  // 단지 바뀌면 추세를 '가장 거래 많은 평형'으로 초기화. 추세는 평형별만 본다
-  // (전체는 평형이 섞여 시세가 들쭉날쭉 → 추세 의미가 흐려짐).
-  useEffect(() => {
-    const groups = detail?.groups;
-    setTrendArea(groups?.length ? groups.reduce((a, b) => (b.count > a.count ? b : a)).m2 : null);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selected]);
-
-  // 단지 선택(또는 평형 선택 변경) 시 월별 추세 로드. trendArea != null이면 그 평형만.
-  useEffect(() => {
-    if (!selected) {
-      setTrend({ loading: false, series: null });
-      return;
-    }
-    let alive = true;
-    setTrend({ loading: true, series: null });
-    const areaParam = trendArea != null ? `&area=${trendArea}` : "";
-    fetch(
-      `/api/trend?lawdCd=${lawdCd}&umdNm=${encodeURIComponent(selected.umdNm)}&aptNm=${encodeURIComponent(selected.aptNm)}&months=${trendMonths}${areaParam}`
-    )
-      .then((r) => r.json())
-      .then((d) => {
-        if (alive) setTrend({ loading: false, series: d.series || [] });
-      })
-      .catch(() => alive && setTrend({ loading: false, series: [] }));
-    return () => {
-      alive = false;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selected, trendArea, trendMonths]);
-
-  // 단지 선택 시 세대수 등 부가정보 로드(국토부 공동주택 API).
-  useEffect(() => {
-    if (!selected) {
-      setInfo({ loading: false, data: null });
-      return;
-    }
-    let alive = true;
-    setInfo({ loading: true, data: null });
-    fetch(
-      `/api/complex-info?lawdCd=${lawdCd}&umdNm=${encodeURIComponent(selected.umdNm)}&aptNm=${encodeURIComponent(selected.aptNm)}`
-    )
-      .then((r) => r.json())
-      .then((d) => {
-        if (alive) setInfo({ loading: false, data: d });
-      })
-      .catch(() => alive && setInfo({ loading: false, data: null }));
-    return () => {
-      alive = false;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selected]);
-
-  async function loadFavorites() {
-    try {
-      const d = await fetch("/api/favorites").then((r) => r.json());
-      if (d.favorites) setFavorites(d.favorites);
-    } catch {
-      /* 무시 */
-    }
-  }
-
-  // 즐겨찾기 D-day(임대차 만기·이벤트 메모) 저장. 0004 마이그레이션 미적용이면 서버가 409로 안내.
-  async function saveFavDday() {
-    if (!favEdit) return;
-    setFavDdayErr("");
-    const r = await fetch("/api/favorites", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        id: favEdit.id,
-        leaseEnd: favEdit.leaseEnd,
-        note: favEdit.note,
-        noteDate: favEdit.noteDate,
-      }),
-    })
-      .then((x) => x.json())
-      .catch(() => ({ error: "저장 실패" }));
-    if (r.error) return setFavDdayErr(r.error);
-    setFavEdit(null);
-    loadFavorites();
-  }
-
-  // ★ 목록에서 직접 해제. toggleFavorite은 "지도에서 고른 단지"가 있어야 동작하는데,
-  // ⚠️ 지도에 안 뜨는 ★ 단지가 실제로 생긴다 — 단지 핀은 면적·가격 필터를 통과한 거래가
-  //    있어야만 그려지고(renderMarkers), 타지역 ★ 폴백은 현재 지역을 제외하기 때문이다.
-  //    그러면 해제할 방법이 아예 없어진다(2026-08-15 구로구 예원아파트 실제 발생:
-  //    거래는 멀쩡히 있었지만 94.63㎡ = 공급 38평이라 평형 필터에 걸려 사라져 있었다).
-  //    그래서 이 경로는 **지도 상태에 전혀 의존하지 않는다**.
-  async function removeFavorite(f) {
-    if (!confirm(`★ ${f.apt_nm} 을(를) 즐겨찾기에서 지울까요?`)) return;
-    await fetch(
-      `/api/favorites?lawdCd=${f.lawd_cd}&umdNm=${encodeURIComponent(f.umd_nm)}&aptNm=${encodeURIComponent(f.apt_nm)}`,
-      { method: "DELETE" }
-    );
-    if (favEdit?.id === f.id) setFavEdit(null); // 편집 중이던 행이 사라지면 열린 폼도 닫는다
-    loadFavorites();
-  }
-
-  async function toggleFavorite() {
-    if (!selected) return;
-    const fav = isSelectedFav;
-    const body = {
-      lawdCd,
-      umdNm: selected.umdNm,
-      aptNm: selected.aptNm,
-      lat: selected.lat,
-      lng: selected.lng,
-    };
-    if (fav) {
-      await fetch(
-        `/api/favorites?lawdCd=${lawdCd}&umdNm=${encodeURIComponent(selected.umdNm)}&aptNm=${encodeURIComponent(selected.aptNm)}`,
-        { method: "DELETE" }
-      );
-    } else {
-      await fetch("/api/favorites", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-    }
-    loadFavorites();
-  }
-
-  // ⚠️ 여기서 renderMarkers를 직접 부르지 않는다. 예전엔 fetch가 끝난 자리에서 바로 그렸는데,
-  //    이 함수는 **호출된 렌더의 클로저**를 들고 있어 로딩 중에 사용자가 필터를 바꾸면
+  // ⚠️ 여기서 마커를 직접 그리지 않는다. 예전엔 fetch가 끝난 자리에서 바로 그렸는데,
+  //    그 함수는 **호출된 렌더의 클로저**를 들고 있어 로딩 중에 사용자가 필터를 바꾸면
   //    바뀌기 전 필터로 마커를 그리고 끝났다(리스트는 최신 필터라 둘이 갈라짐).
   //    지금은 tradesData 상태만 갱신하고, 마커는 아래 effect가 최신 값으로 그린다.
   async function loadTrades(code, { refresh = false } = {}) {
@@ -755,9 +441,8 @@ export default function KakaoMap() {
     setSelected(null);
     setStatus(`${regionName(code)} 최근 ${MONTHS}개월 ${refresh ? "갱신" : "불러오는"} 중…`);
     try {
-      const ymd = `${new Date().getFullYear()}${String(new Date().getMonth() + 1).padStart(2, "0")}`;
       const res = await fetch(
-        `/api/trades?lawdCd=${code}&dealYmd=${ymd}&months=${MONTHS}${refresh ? "&refresh=1" : ""}`
+        `/api/trades?lawdCd=${code}&dealYmd=${kstYm()}&months=${MONTHS}${refresh ? "&refresh=1" : ""}`
       );
       const data = await res.json();
       if (data.error) {
@@ -808,6 +493,8 @@ export default function KakaoMap() {
     return sortComplexRows(rows, sortBy);
   }, [baseRows, affordMode, onlyBuyable, sortBy, nameQuery, lawdCd]);
 
+  const householdMap = useHouseholds(listRows, lawdCd); // 상위 행 세대수 lazy — map/useHouseholds.js
+
   // 딥링크로 착지해 검색 결과가 **한 곳뿐이면** 그 단지를 자동으로 연다 — 거기까지 가야
   // "지도에서 보기"가 끝난 것이다(평형·시세·★ 버튼이 다 세부패널에 있다).
   // ⚠️ 한 번만 소비하는 ref다. 사용자가 검색창에 타이핑하다 우연히 1곳이 될 때마다
@@ -826,96 +513,31 @@ export default function KakaoMap() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tradesData]);
 
-  function renderMarkers(rows) {
-    const data = tradesData;
+  // 마커는 오직 여기서만 그린다(단일 경로). baseRows가 바뀔 때마다 = 데이터·필터·자금·순위가
+  // 바뀔 때마다 최신 값으로 다시 그려진다. 마커에 영향 주는 새 입력은 대부분 baseRows의 deps에
+  // 넣으면 되고, 행에 안 들어가는 입력만 이 effect deps에 직접 넣을 것.
+  // ⚠️ 지역 전환 중 stale 렌더 방지 가드를 지우지 말 것 — 옛 지역 데이터로 setBounds가 실행되면
+  //    fitRef가 소진돼 새 지역으로 지도가 안 움직이고, idle 핸들러가 지역을 되돌린다.
+  // ⚠️ ready 게이트를 booted로 내리지 말 것 — 데이터가 SDK보다 먼저 오는 순서의 유일한 안전장치다.
+  useEffect(() => {
+    if (!ready || !baseRows || !tradesData) return;
+    if (tradesData.lawdCd !== lawdCd) return;
     const kakao = window.kakao;
     const map = mapRef.current;
-    if (!data || !kakao || !map) return;
-
-    // 오버레이는 **재사용**한다 — 필터를 한 번 바꿀 때마다 수백 개를 파괴/재생성하면
-    // 지도가 눈에 띄게 멈칫한다. 이번 렌더에 살아남은 키를 모아 두고 나머지만 걷어낸다.
-    const alive = new Set();
-    const upsert = (key, lat, lng, cls, html, onClick) => {
-      alive.add(key);
-      let e = overlaysRef.current.get(key);
-      if (!e) {
-        const el = document.createElement("div");
-        const overlay = new kakao.maps.CustomOverlay({
-          position: new kakao.maps.LatLng(lat, lng),
-          content: el,
-          yAnchor: 1.2,
-        });
-        overlay.setMap(map);
-        e = { overlay, el, lat, lng, cls: "", html: "" };
-        overlaysRef.current.set(key, e);
-      } else if (e.lat !== lat || e.lng !== lng) {
-        e.overlay.setPosition(new kakao.maps.LatLng(lat, lng));
-        e.lat = lat;
-        e.lng = lng;
-      }
-      if (e.cls !== cls) { e.el.className = cls; e.cls = cls; }
-      if (e.html !== html) { e.el.innerHTML = html; e.html = html; }
-      e.el.onclick = onClick; // 속성 대입 — addEventListener와 달리 중복 등록되지 않는다
-    };
-
-    const bounds = new kakao.maps.LatLngBounds();
-    let shownComplexes = 0;
-    let shownTrades = 0;
-    let buyableCount = 0;
-
-    for (const r of rows) {
-      const c = r.c;
-      if (c.lat == null) continue; // 지오코딩 실패 단지 — 리스트엔 남지만 핀은 못 찍는다
-
-      const pos = new kakao.maps.LatLng(c.lat, c.lng);
-      bounds.extend(pos);
-      shownComplexes += 1;
-      shownTrades += r.count;
-
-      // 구매가능: 어떤 평형이든 보유자산으로 필요자금을 댈 수 있으면(최대 여유 ≥ 0) true.
-      // 자금 설정이 없으면 null → 색칠하지 않고 즐겨찾기 금색을 살린다.
-      const buyable = affordMode ? r.buyable : null;
-      if (buyable) buyableCount += 1;
-
-      const hot = r.hot; // 1년 급등(지역 대비 상대 기준, buildComplexRows) 단지는 핀에도 🔥
-      let cls = "trade-pin";
-      if (buyable === true) cls += " trade-pin--ok";
-      else if (buyable === false) cls += " trade-pin--no";
-      else if (r.isFav) cls += " trade-pin--fav"; // 색칠모드 아닐 때만 금색
-      upsert(
-        `c:${data.lawdCd}|${c.umdNm}|${c.aptNm}`,
-        c.lat,
-        c.lng,
-        cls,
-        `<b>${r.isFav ? "★ " : ""}${hot ? "🔥 " : ""}평균 ${formatManwon(r.avg)}</b><span>${c.aptNm}</span>`,
-        () => setSelected(c)
-      );
-    }
-
-    // 타지역 즐겨찾기: 현재 지역 밖의 즐겨찾기도 ★ 핀으로 함께 표시한다.
-    // 그 지역 거래는 안 불러왔으므로 가격이 없음 → 지역명만 보여주고, 클릭하면 그 지역으로 이동.
-    // (현재 지역 즐겨찾기는 위 루프에서 이미 금색 가격 핀으로 그림 → 중복 제외.)
-    favoritesRef.current.forEach((f) => {
-      if (f.lat == null || f.lawd_cd === data.lawdCd) return;
-      upsert(
-        `f:${f.lawd_cd}|${f.umd_nm}|${f.apt_nm}`,
-        f.lat,
-        f.lng,
-        "trade-pin trade-pin--fav trade-pin--away",
-        `<b>★ ${regionName(f.lawd_cd)}</b><span>${f.apt_nm}</span>`,
-        () => gotoFavorite(f)
-      );
+    if (!kakao || !map) return;
+    const { bounds, shown, trades, buyable } = syncMarkers({
+      kakao,
+      map,
+      overlays: overlaysRef.current,
+      rows: baseRows,
+      lawdCd: tradesData.lawdCd,
+      favorites,
+      affordMode,
+      onSelect: setSelected,
+      onGotoFavorite: gotoFavorite,
     });
 
-    // 이번 렌더에서 빠진 오버레이만 지운다.
-    for (const [key, e] of overlaysRef.current) {
-      if (!alive.has(key)) {
-        e.overlay.setMap(null);
-        overlaysRef.current.delete(key);
-      }
-    }
-
-    if (fitRef.current && shownComplexes) {
+    if (fitRef.current && shown) {
       moveMap(() => map.setBounds(bounds));
       fitRef.current = false;
     }
@@ -927,64 +549,13 @@ export default function KakaoMap() {
     ]
       .filter(Boolean)
       .join(" · ");
-    const buyTag = affordMode && shownComplexes ? ` · 🟢 구매가능 ${buyableCount}/${shownComplexes}곳` : "";
+    const head = `${regionName(tradesData.lawdCd)} · 최근 ${MONTHS}개월${tags ? " · " + tags : ""}`;
+    const buyTag = affordMode && shown ? ` · 🟢 구매가능 ${buyable}/${shown}곳` : "";
     setStatus(
-      shownComplexes
-        ? `${regionName(data.lawdCd)} · 최근 ${MONTHS}개월${tags ? " · " + tags : ""} · 거래 ${shownTrades}건 / 단지 ${shownComplexes}곳${buyTag}`
-        : `${regionName(data.lawdCd)} · 최근 ${MONTHS}개월${tags ? " · " + tags : ""} · 조건에 맞는 거래 없음`
+      shown ? `${head} · 거래 ${trades}건 / 단지 ${shown}곳${buyTag}` : `${head} · 조건에 맞는 거래 없음`
     );
-  }
-
-  // 마커는 오직 여기서만 그린다(단일 경로). baseRows가 바뀔 때마다 = 데이터·필터·자금·순위가
-  // 바뀔 때마다 최신 값으로 다시 그려진다.
-  // ⚠️ 지역 전환 중 stale 렌더 방지 가드를 지우지 말 것 — 옛 지역 데이터로 setBounds가 실행되면
-  //    fitRef가 소진돼 새 지역으로 지도가 안 움직이고, idle 핸들러가 지역을 되돌린다.
-  useEffect(() => {
-    if (!ready || !baseRows || !tradesData) return;
-    if (tradesData.lawdCd !== lawdCd) return;
-    renderMarkers(baseRows);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, baseRows, tradesData, lawdCd, favorites]);
-
-  // 리스트 상위 N개 행의 세대수 lazy 조회(/api/complex-info POST 일괄 — 서버가 kapt_cache 조회).
-  useEffect(() => {
-    if (!listRows) return;
-    const targets = listRows
-      .slice(0, LIST_INFO_TOP)
-      .filter((r) => !householdMap.has(r.key) && !infoInflightRef.current.has(r.key));
-    if (!targets.length) return;
-    targets.forEach((r) => infoInflightRef.current.add(r.key));
-    let alive = true;
-    (async () => {
-      try {
-        const res = await fetch("/api/complex-info", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            lawdCd,
-            items: targets.map((r) => ({ umdNm: r.c.umdNm, aptNm: r.c.aptNm })),
-          }),
-        })
-          .then((x) => x.json())
-          .catch(() => null);
-        if (!alive) return;
-        const infos = res?.infos || [];
-        setHouseholdMap((prev) => {
-          const m = new Map(prev);
-          targets.forEach((r, j) => m.set(r.key, infos[j]?.households ?? null));
-          return m;
-        });
-      } finally {
-        // 요청이 끝나면(성공/중단 무관) inflight에서 해제. 중단(alive=false) 시에도 해제해야
-        // 키가 남아 세대수를 영영 못 부르는 걸 막는다 — rank 도착 등으로 listRows가 자주 바뀜.
-        targets.forEach((r) => infoInflightRef.current.delete(r.key));
-      }
-    })();
-    return () => {
-      alive = false;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [listRows, lawdCd]);
 
   // 리스트 행 클릭 → 단지 선택 + 지도 이동(자동맞춤 없이 그 위치로).
   // 모바일: half 시트가 화면 아래 절반을 덮는다 → 목표 중심을 핀보다 innerHeight/4 px **아래**로 잡아
@@ -1135,10 +706,10 @@ export default function KakaoMap() {
       ownedNet={ownedNet}
       favProps={{
         onGoto: gotoFavorite,
-        onRemove: removeFavorite,
-        favEdit, setFavEdit,
-        favDdayErr, setFavDdayErr,
-        onSave: saveFavDday,
+        onRemove: favs.removeFavorite,
+        favEdit: favs.favEdit, setFavEdit: favs.setFavEdit,
+        favDdayErr: favs.favDdayErr, setFavDdayErr: favs.setFavDdayErr,
+        onSave: favs.saveFavDday,
       }}
     />
   );
@@ -1280,51 +851,7 @@ export default function KakaoMap() {
 
       {showHelp && <HelpModal onClose={() => setShowHelp(false)} />}
 
-      <style>{`
-        .trade-pin {
-          display: flex; flex-direction: column; align-items: center;
-          background: #2563eb; color: #fff; padding: 4px 10px;
-          border-radius: 999px; font-size: 11px; white-space: nowrap;
-          box-shadow: 0 1px 2px rgba(15,23,42,0.16), 0 4px 12px rgba(15,23,42,0.22),
-            0 0 0 1.5px rgba(255,255,255,0.9);
-          cursor: pointer; transform: translateX(-50%);
-          transition: background 0.15s, transform 0.15s, box-shadow 0.15s;
-        }
-        /* 공통 hover는 변형별 hover보다 먼저 — 같은 특이도라 뒤에 두면 색칠 핀 hover색을 덮음 */
-        .trade-pin:hover {
-          background: #1d4ed8;
-          transform: translateX(-50%) translateY(-2px);
-          box-shadow: 0 2px 4px rgba(15,23,42,0.16), 0 8px 20px rgba(15,23,42,0.28),
-            0 0 0 1.5px rgba(255,255,255,0.95);
-        }
-        .trade-pin--fav { background: #f59e0b; }
-        .trade-pin--fav:hover { background: #d97706; }
-        .trade-pin--away { opacity: 0.92;
-          outline: 2px dashed rgba(255,255,255,0.95); outline-offset: 1px; }
-        .trade-pin--ok { background: #059669; }
-        .trade-pin--ok:hover { background: #047857; }
-        .trade-pin--no { background: #dc2626; }
-        .trade-pin--no:hover { background: #b91c1c; }
-        .trade-pin b { font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums; }
-        .trade-pin span { font-size: 9px; opacity: 0.85; max-width: 92px;
-          overflow: hidden; text-overflow: ellipsis; }
-        /* 현위치 점 — 단지 핀과 헷갈리지 않게 파란 원 + 옅은 링. */
-        .my-loc-dot {
-          width: 14px; height: 14px; border-radius: 50%;
-          background: #2563eb; border: 2.5px solid #fff;
-          box-shadow: 0 0 0 5px rgba(37,99,235,0.22), 0 1px 4px rgba(15,23,42,0.35);
-          transform: translate(-50%, -50%);
-        }
-        .cx-row { padding: 9px 8px 9px 10px; border-bottom: 1px solid ${C.divider};
-          border-left: 3px solid transparent; cursor: pointer;
-          border-radius: 0 10px 10px 0;
-          transition: background 0.15s, border-color 0.15s;
-          animation: cxIn 0.28s ease both; }
-        .cx-row:hover { background: #f8fafc; }
-        .cx-row--on { background: ${C.blueSoft}; border-left-color: ${C.blue}; }
-        @keyframes cxIn { from { opacity: 0; transform: translateY(4px); }
-          to { opacity: 1; transform: none; } }
-      `}</style>
+      <style>{MAP_CSS}</style>
     </div>
   );
 }

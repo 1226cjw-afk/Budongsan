@@ -3,6 +3,7 @@
 
 import { fetchRawMonths, geocodeMany, monthsBack } from "../../lib/trades";
 import { cachedJson } from "../../lib/httpCache";
+import { toClientTrade } from "../../lib/tradeStats";
 
 export async function GET(request) {
   const { searchParams } = new URL(request.url);
@@ -23,6 +24,7 @@ export async function GET(request) {
   // 1) 각 달 원본 거래 수집(캐시) 후 병합. 신선도(fetchedAt)는 수집 단계에서 함께 산출.
   //    해제·직거래는 fetchRawMonths가 이미 걸러낸 상태로 준다(건수만 excluded로 받아 표기용).
   let trades, fetchedAt, excluded;
+  const t0 = Date.now();
   try {
     const { byYmd, latestFetched, excluded: ex } = await fetchRawMonths(lawdCd, ymds, { refresh });
     trades = ymds.flatMap((ymd) => byYmd.get(ymd) || []);
@@ -46,7 +48,9 @@ export async function GET(request) {
     aptNm: g[0].aptNm,
     jibun: g[0].jibun,
   }));
+  const t1 = Date.now();
   const coordMap = await geocodeMany(lawdCd, items);
+  const t2 = Date.now();
 
   const complexes = [];
   for (const [, group] of byApt) {
@@ -60,7 +64,7 @@ export async function GET(request) {
       lng: coord?.lng ?? null,
       naverName: coord?.placeName || null, // 카카오 정식 단지명 — 네이버 부동산 딥링크용
 
-      trades: group,
+      trades: group.map(toClientTrade), // 지도가 읽는 4필드만 — lib/tradeStats.toClientTrade 주석
       maxAmount: Math.max(...amounts),
       minAmount: Math.min(...amounts),
       count: group.length,
@@ -80,5 +84,10 @@ export async function GET(request) {
     excluded, // {cancelled, direct} — 시세에서 제외한 해제·직거래 건수
 
     complexes,
-  }, { cache: !refresh });
+  }, {
+    cache: !refresh,
+    // 구간별 서버 시간 — 개발자도구 Network → Timing에 뜬다. 엣지 미스가 느릴 때 원인 가르기용
+    // (raw = 실거래 캐시·국토부, geo = 좌표 캐시·카카오). 2026-10-25 도입.
+    headers: { "Server-Timing": `raw;dur=${t1 - t0}, geo;dur=${t2 - t1}` },
+  });
 }

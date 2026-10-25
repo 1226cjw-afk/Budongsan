@@ -76,7 +76,9 @@ export default function HotCard({ hot, watch, profile, assets, hasIncome, onFocu
           <div style={emptyRow}>
             {ch === "news"
               ? "최근 뉴스에 반복 등장한 단지가 없어요."
-              : w === "today"
+              : hot.error // ⚠️ 실패를 "신고 없음"으로 보이게 하지 말 것 — 둘은 다음 행동이 다르다
+                ? "핫플 집계를 불러오지 못했어요 — 잠시 뒤 탭을 다시 열어 주세요."
+                : w === "today"
                 ? "오늘 새 신고는 아직이에요 — 매일 아침 쌓여요. 이번 주를 보세요."
                 : "이번 주 새 신고 기록이 아직 없어요 — 매일 아침부터 쌓여요."}
           </div>

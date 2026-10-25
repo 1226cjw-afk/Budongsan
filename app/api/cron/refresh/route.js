@@ -25,9 +25,21 @@ export const maxDuration = 60; // Vercel 함수 최대 실행(초) — 첫 워�
 
 async function refreshRegion(lawdCd, ymds) {
   try {
-    const { byYmd } = await fetchRawMonths(lawdCd, ymds, { refresh: true });
-    const months = ymds.map((ymd) => ({ ymd, count: byYmd.get(ymd)?.length ?? 0 }));
-    return { lawdCd, total: months.reduce((s, m) => s + m.count, 0), months };
+    const { byYmd, fetchedYmds } = await fetchRawMonths(lawdCd, ymds, { refresh: true });
+    // ⚠️ refresh 모드는 모든 달을 국토부에서 받는다 → fetchedYmds에 없는 달 = 그 달만 실패한 것
+    //    (fetchRawMonths가 allSettled로 나머지를 살린다). 예전엔 이걸 count 0으로 찍어 "거래 없음"과
+    //    구별이 안 됐다(2026-09-29 리뷰 Minor). failed는 응답의 hotCollect.errors에도 올라간다.
+    const ok = new Set(fetchedYmds);
+    const months = ymds.map((ymd) =>
+      ok.has(ymd) ? { ymd, count: byYmd.get(ymd)?.length ?? 0 } : { ymd, failed: true }
+    );
+    const failed = months.filter((m) => m.failed).map((m) => m.ymd);
+    return {
+      lawdCd,
+      total: months.reduce((s, m) => s + (m.count || 0), 0),
+      months,
+      ...(failed.length ? { error: `월 실패 ${failed.join(",")}` } : null),
+    };
   } catch (e) {
     return { lawdCd, error: e.message };
   }

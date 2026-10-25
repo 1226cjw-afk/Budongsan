@@ -16,6 +16,15 @@ export function kstDate(nowMs = Date.now()) {
   return new Date(nowMs + KST_OFFSET_MS).toISOString().slice(0, 10);
 }
 
+// KST 기준 "이번 달" "YYYYMM" — 국토부 DEAL_YMD 형식. 실거래 수집 창의 기준월.
+// ⚠️ 예전엔 trades.currentYmd()가 `new Date().getMonth()`(로컬 Date)로 셌다 — Vercel(UTC)에선
+//    **매달 1일 KST 00:00~08:59**에 지난달이 나온다. 06:00 cron이 정확히 그 구간이라 1일 cron은
+//    새 달 대신 지난달·지지난달을 재수집했다(2026-10-25 발견 — KST 가드 테스트의 사각지대인
+//    "로컬 Date 산술" 계열, 이 파일 머리 주석 참조).
+export function kstYm(nowMs = Date.now()) {
+  return kstDate(nowMs).slice(0, 7).replace("-", "");
+}
+
 // D-day 계산(양수 = 남음). ymd "YYYY-MM-DD".
 export function daysUntil(ymd) {
   return Math.ceil((new Date(ymd + "T00:00:00") - Date.now()) / 86400000);

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { calcMaxLoan, loanCalcFor } from "../app/lib/loanPolicy.js";
+import { calcMaxLoan, loanCalcFor, usableAssets, ownedProceeds } from "../app/lib/loanPolicy.js";
 import { calcAcquisitionCost } from "../app/lib/acquisitionCost.js";
 
 const BASE = {
@@ -135,4 +135,25 @@ test("문자열로 들어오는 화면 입력을 숫자로 정규화한다", () 
   assert.ok(Number.isFinite(ln.monthlyPayment));
   // 금리는 % → 소수로 나뉘어 들어간다(4 → 0.04). 안 나누면 월납이 터무니없이 커진다.
   assert.ok(ln.monthlyPayment < 2000, `월납이 ${ln.monthlyPayment}만원 — rate 변환이 빠졌나`);
+});
+
+// ── 자기자금 정의(usableAssets) — 지도·오늘 탭 공용 ───────────────────────
+test("usableAssets = 여유 현금 + 보유 주택 매도 실수령", () => {
+  const p = {
+    assets: "30000", ownedLoanBalance: "20000", ownedDeposit: "5000",
+    owned: { priceRecent: 80000, priceAvg: 76000 },
+  };
+  assert.equal(usableAssets(p), 30000 + (80000 - 20000 - 5000));
+  assert.equal(usableAssets(p, "avg"), 30000 + (76000 - 20000 - 5000)); // 지도 기준가 토글
+});
+
+test("usableAssets: 기준가가 비면 다른 쪽으로, 실수령은 음수가 되지 않는다", () => {
+  assert.equal(ownedProceeds({ owned: { priceRecent: 0, priceAvg: 50000 } }).salePrice, 50000);
+  assert.equal(ownedProceeds({ owned: { priceRecent: 50000 }, ownedLoanBalance: "90000" }).net, 0);
+});
+
+test("usableAssets: 프로필이 없거나 보유 주택이 없으면 현금만", () => {
+  assert.equal(usableAssets(null), 0);
+  assert.equal(usableAssets({ assets: "12000" }), 12000);
+  assert.deepEqual(ownedProceeds({ assets: "1" }), { salePrice: 0, net: 0 });
 });

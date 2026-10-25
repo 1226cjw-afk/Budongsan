@@ -12,6 +12,9 @@
 //    오류가 엣지에 앉으면 고쳐진 뒤에도 한 시간 동안 같은 오류가 나간다.
 export const CDN_DAILY = "public, s-maxage=600, stale-while-revalidate=3600";
 
-export function cachedJson(body, { cache = true } = {}) {
-  return Response.json(body, cache ? { headers: { "Cache-Control": CDN_DAILY } } : undefined);
+// headers = 함께 실을 추가 헤더(Server-Timing 등). 캐시 여부와 무관하게 붙는다.
+export function cachedJson(body, { cache = true, headers = {} } = {}) {
+  return Response.json(body, {
+    headers: cache ? { ...headers, "Cache-Control": CDN_DAILY } : headers,
+  });
 }

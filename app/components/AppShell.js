@@ -44,8 +44,10 @@ function useNewsFeed(enabled) {
   const reload = useCallback(async () => {
     loadedAt.current = Date.now();
     try {
-      // ⚠️ limit 600: 2026-09-02 키워드 확장 후 최근 7일이 이미 372건. 잘리면 요주의 집계 모수가 준다.
-      const res = await fetch("/api/news?limit=600");
+      // ⚠️ limit = 서버 상한 1000. 7일치가 2026-09-02 372건 → 2026-10-25 **676건**으로 늘어 예전 600에서
+      //    잘리고 있었다(가장 오래된 하루가 통째로 빠져 "최근 7일" 라벨이 거짓이 되고 📢 요주의 집계 모수가 준다).
+      //    응답의 truncated가 true면 다시 상한에 닿은 것 — 서버 상한·창 길이를 볼 것.
+      const res = await fetch("/api/news?limit=1000");
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
       setItems(json.items);

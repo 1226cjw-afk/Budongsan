@@ -20,9 +20,11 @@ export async function GET(request) {
   //    같은 계열 버그가 이 프로젝트에서 네 번 재발했다(format.js 주석 참조).
   const since = `${addDaysYmd(kstDate(), -(DAYS - 1))}T00:00:00+09:00`;
 
+  // ⚠️ fetched_at은 싣지 않는다 — 아래 gte가 published_at NULL 행을 이미 빼므로 클라의
+  //    `published_at || fetched_at` 폴백이 쓰일 일이 없다(응답 260KB 중 20KB가 이 필드였다).
   const { data, error } = await supabaseAdmin
     .from("news_items")
-    .select("link, title, source, description, keyword, published_at, fetched_at")
+    .select("link, title, source, description, keyword, published_at")
     .gte("published_at", since)
     .order("published_at", { ascending: false, nullsFirst: false })
     .limit(limit);
@@ -39,5 +41,7 @@ export async function GET(request) {
     isCapitalAreaNews(it.title, it.description || "")
   );
   // days를 함께 내려 화면 라벨("최근 7일")이 서버 기준과 어긋나지 않게 한다.
-  return cachedJson({ items, days: DAYS, since }); // 엣지 캐시 — lib/httpCache.js
+  // truncated = limit에 닿았다 → "최근 7일"의 오래된 쪽이 잘렸다(2026-10-25에 실제로 그랬다 — 676건 > 600).
+  if (data?.length === limit) console.warn("[api/news] limit에 닿음 — 7일 창이 잘렸다", limit);
+  return cachedJson({ items, days: DAYS, since, truncated: data?.length === limit }); // 엣지 캐시 — lib/httpCache.js
 }

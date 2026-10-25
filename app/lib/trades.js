@@ -5,7 +5,7 @@
 import { supabaseAdmin } from "./supabaseServer";
 import { regionPrefix, regionToken } from "./regions";
 import { excludeAbnormal } from "./tradeStats";
-import { kstDate } from "./format";
+import { kstDate, kstYm } from "./format";
 import { diffNewTrades, shouldRecord, buildReportRows, looksLikeFlood } from "./tradeReports";
 import { rtmsResponseError, fetchWithTimeout } from "./rtms";
 
@@ -15,11 +15,16 @@ const KAKAO_KEYWORD = "https://dapi.kakao.com/v2/local/search/keyword.json";
 const KAKAO_ADDRESS = "https://dapi.kakao.com/v2/local/search/address.json";
 
 const MAX_AMOUNT = 120000; // 12억 이상 거래 제외(만원)
-const CURRENT_MONTH_TTL_MS = 12 * 60 * 60 * 1000; // 이번달 캐시 12시간
+// 이번 달 캐시 TTL. 12h → **20h**(2026-10-25): 9/29부터 cron이 서울·경기 72곳 전부를 매일 06~07시에
+// 재수집하므로, 12h면 그 데이터가 19시쯤 만료돼 **저녁 방문마다** 국토부를 다시 불렀다(같은 날 데이터라
+// 새로 얻는 건 거의 없다). prod 실측 TTFB: 국토부 재수집 경로 3.3~5.5s vs 캐시 경로 1.8s.
+// 20h = cron 시각(±59분)부터 다음 날 새벽까지 덮고, cron이 하루 빠지면 그다음 방문이 직접 받는다.
+// ⚠️ 24h 이상으로 늘리지 말 것 — cron이 실패한 날에도 하루 넘게 어제 것을 보여 주게 된다.
+const CURRENT_MONTH_TTL_MS = 20 * 60 * 60 * 1000;
 
+// ⚠️ KST 기준(format.kstYm). 로컬 Date로 세면 서버(UTC)에서 매달 1일 오전에 지난달이 나온다.
 export function currentYmd() {
-  const d = new Date();
-  return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}`;
+  return kstYm();
 }
 
 export function isCurrentMonth(ymd) {
@@ -27,12 +32,17 @@ export function isCurrentMonth(ymd) {
 }
 
 // 종료월(YYYYMM)부터 과거로 n개월 YYYYMM 배열(내림차순).
+// 정수 연·월로 센다(Date 객체 없음 — format.js의 "날짜는 문자열로" 원칙, 서버 getMonth 가드 대상).
 export function monthsBack(endYmd, n) {
-  const d = new Date(+endYmd.slice(0, 4), +endYmd.slice(4) - 1, 1);
+  let y = +endYmd.slice(0, 4);
+  let m = +endYmd.slice(4);
   const out = [];
   for (let i = 0; i < n; i++) {
-    out.push(`${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}`);
-    d.setMonth(d.getMonth() - 1);
+    out.push(`${y}${String(m).padStart(2, "0")}`);
+    if (--m === 0) {
+      m = 12;
+      y -= 1;
+    }
   }
   return out;
 }
@@ -147,15 +157,20 @@ const RTMS_CONCURRENCY = 36;
 //    캐시를 안 읽으므로 여기서 한 번 더 조회한다(수집된 달이 있을 때만, 요청당 1쿼리).
 // 가격 기준 pool = 이번 호출에서 받은 달 전부(cron은 이번 달+지난달).
 // 실패는 삼킨다 — 핫플 기록이 실거래 조회를 죽이면 안 된다.
-async function recordReports(lawdCd, okRows) {
+// prevBy = 호출자가 이미 읽어 둔 옛 행(Map ymd → row). 일반 경로는 캐시 조회에서 stale 행까지 받아 두므로
+// 그대로 넘겨 조회 1회를 아낀다(2026-10-25 — 리뷰 Minor "recordReports가 /api/trades에 조회 1회 추가").
+// refresh 모드(cron·🔄)만 캐시를 안 읽었으니 여기서 조회한다.
+async function recordReports(lawdCd, okRows, prevBy = null) {
   try {
-    const { data: prevRows, error } = await supabaseAdmin
-      .from("trade_raw_cache")
-      .select("deal_ymd, trades, fetched_at")
-      .eq("lawd_cd", lawdCd)
-      .in("deal_ymd", okRows.map((r) => r.deal_ymd));
-    if (error) throw error;
-    const prevBy = new Map((prevRows || []).map((r) => [r.deal_ymd, r]));
+    if (!prevBy) {
+      const { data: prevRows, error } = await supabaseAdmin
+        .from("trade_raw_cache")
+        .select("deal_ymd, trades, fetched_at")
+        .eq("lawd_cd", lawdCd)
+        .in("deal_ymd", okRows.map((r) => r.deal_ymd));
+      if (error) throw error;
+      prevBy = new Map((prevRows || []).map((r) => [r.deal_ymd, r]));
+    }
     const pool = okRows.flatMap((r) => r.trades);
     const reportedOn = kstDate();
     const rows = [];
@@ -207,12 +222,18 @@ export async function fetchRawMonths(lawdCd, ymds, { refresh = false, cacheOnly 
     return { byYmd, fetchedYmds, latestFetched, excluded, removed };
   };
 
+  // 캐시에서 읽은 행 전부(stale 포함) — 재수집분의 🔥 신고 판별(recordReports)이 옛 payload로 쓴다.
+  // null = 캐시를 안 읽은 경로(refresh) → recordReports가 직접 조회한다.
+  let prevBy = null;
   if (supabaseAdmin && !refresh) {
     const { data } = await supabaseAdmin
       .from("trade_raw_cache")
       .select("deal_ymd, trades, fetched_at")
       .eq("lawd_cd", lawdCd)
       .in("deal_ymd", ymds);
+    // ⚠️ 조회가 실패해 data가 null이면 prevBy도 null로 둔다 — 빈 Map을 넘기면 "옛 행 없음"으로 읽혀
+    //    기록을 조용히 건너뛴다(recordReports가 다시 조회하게 하는 쪽이 맞다).
+    if (data) prevBy = new Map(data.map((r) => [r.deal_ymd, r]));
     for (const row of data || []) {
       const ageMs = Date.now() - new Date(row.fetched_at).getTime();
       const stale = isCurrentMonth(row.deal_ymd) && ageMs > CURRENT_MONTH_TTL_MS;
@@ -253,7 +274,7 @@ export async function fetchRawMonths(lawdCd, ymds, { refresh = false, cacheOnly 
     if (okRows.length) {
       latestFetched = now; // 방금 받은 게 가장 신선.
       if (supabaseAdmin) {
-        await recordReports(lawdCd, okRows); // ⚠️ upsert보다 먼저 — 옛 payload와 비교해야 한다
+        await recordReports(lawdCd, okRows, prevBy); // ⚠️ upsert보다 먼저 — 옛 payload와 비교해야 한다
         const { error } = await supabaseAdmin
           .from("trade_raw_cache")
           .upsert(okRows, { onConflict: "lawd_cd,deal_ymd" });

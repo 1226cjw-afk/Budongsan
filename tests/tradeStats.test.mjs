@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   toPyeong, pyeongFromSupply, excludeAbnormal, median, groupByPyeong, summarize,
+  toClientTrade, filterTrades,
 } from "../app/lib/tradeStats.js";
 
 // ── 청약 공고의 평 환산 ────────────────────────────────────
@@ -139,4 +140,23 @@ test("groupByPyeong이 공급 평형을 붙이고 면적 오름차순으로 준�
 
 test("summarize는 빈 배열에 null", () => {
   assert.equal(summarize([]), null);
+});
+
+// ── /api/trades 응답 슬림화 ─────────────────────────────────
+// ⚠️ 지도 화면은 toClientTrade를 거친 거래만 받는다. 집계·필터·평형 결과가 원본과 같아야 한다 —
+//    지도에서 새 필드를 읽게 되면 이 테스트가 아니라 toClientTrade에 필드를 추가할 것.
+test("toClientTrade를 거쳐도 지도 집계 결과가 원본과 같다", () => {
+  const raw = [
+    { aptNm: "A", umdNm: "호계동", jibun: "1", floor: 3, dealAmount: 67200, area: 55.4, buildYear: "2003",
+      dealYmd: "2026-10-22", cdealType: "", dealingGbn: "중개거래", buyerGbn: "개인", slerGbn: "개인", cdealDay: "" },
+    { aptNm: "A", umdNm: "호계동", jibun: "1", floor: 9, dealAmount: 91000, area: 84.9, buildYear: "2003",
+      dealYmd: "2026-09-02", cdealType: "", dealingGbn: "중개거래", buyerGbn: "개인", slerGbn: "개인", cdealDay: "" },
+  ];
+  const slim = raw.map(toClientTrade);
+  assert.deepEqual(groupByPyeong(slim), groupByPyeong(raw));
+  assert.deepEqual(summarize(slim), summarize(raw));
+  const band = { min: 0, max: Infinity };
+  assert.equal(filterTrades(slim, band, band).length, filterTrades(raw, band, band).length);
+  assert.equal(slim[0].buildYear, "2003"); // 🏗 재건축 배지 원료
+  assert.ok(JSON.stringify(slim).length < JSON.stringify(raw).length / 2);
 });

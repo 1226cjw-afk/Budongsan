@@ -115,6 +115,16 @@ export function groupByPyeong(trades) {
     });
 }
 
+// /api/trades가 클라에 내려 주는 거래 한 건. 지도 화면이 읽는 필드만 남긴다:
+//   area·dealAmount(필터·평형·대출) · dealYmd(최근가 판정) · buildYear(🏗 재건축 배지·준공연도).
+// 왜(2026-10-25 prod 실측): 원본은 13필드(aptNm·umdNm은 단지 객체에 이미 있고, 해제·직거래 표지는
+// fetchRawMonths가 이미 걸러낸 뒤라 의미가 없다)라 안양 동안구 601건이 응답 148KB였다.
+// ⚠️ 지도에서 새 필드를 읽게 되면 **여기에 추가할 것** — 안 그러면 그 값이 늘 undefined다.
+//    서버 집계(브리핑·핫플·추세)는 fetchRawMonths 원본을 쓰므로 이 함수와 무관하다.
+export function toClientTrade(t) {
+  return { area: t.area, dealAmount: t.dealAmount, dealYmd: t.dealYmd, buildYear: t.buildYear };
+}
+
 // 면적·가격 필터 밴드({min,max}) 적용 — 지도 마커와 리스트 패널이 같은 조건을 공유.
 export function filterTrades(trades, areaBand, priceBand) {
   return (trades || []).filter(

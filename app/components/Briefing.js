@@ -14,6 +14,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import useLoanProfile from "./useLoanProfile";
 import { useShell } from "./AppShell";
 import { buildNewsWatch } from "../lib/newsWatch";
+import { usableAssets } from "../lib/loanPolicy"; // 자기자금 정의 — 지도와 같은 함수(단일 지점)
 import { loadSeen, markSeen } from "../lib/briefingSeen";
 import { emptyHint } from "./briefing/styles";
 import HotCard from "./briefing/HotCard";
@@ -24,17 +25,6 @@ import DealFeedCard from "./briefing/DealFeedCard";
 import SubscriptionCard from "./briefing/SubscriptionCard";
 
 const EMPTY_HOT = { today: { complexes: [] }, week: { complexes: [] } };
-
-// 지도의 assets 정의와 같다 — 여유현금 + 보유주택 매도 실수령.
-function usableAssets(p) {
-  if (!p) return 0;
-  const o = p.owned;
-  const sale = o ? o.priceRecent || o.priceAvg || 0 : 0;
-  const net = o
-    ? Math.max(0, sale - (Number(p.ownedLoanBalance) || 0) - (Number(p.ownedDeposit) || 0))
-    : 0;
-  return (Number(p.assets) || 0) + net;
-}
 
 export default function Briefing({ news, active = true }) {
   const [data, setData] = useState(null); // null = 로딩 중
@@ -67,8 +57,8 @@ export default function Briefing({ news, active = true }) {
     // 🔥 핫플 — 같은 이유로 여기서 동시 출발(카드 안 fetch 금지).
     fetch("/api/hot")
       .then((r) => r.json())
-      .then((d) => setHot(d.week ? d : EMPTY_HOT))
-      .catch(() => setHot(EMPTY_HOT));
+      .then((d) => setHot(d.week ? d : { ...EMPTY_HOT, error: true }))
+      .catch(() => setHot({ ...EMPTY_HOT, error: true })); // 실패 ≠ 신고 없음 — HotCard가 구별해 보여 준다
   }, []);
 
   // keep-alive라 다시 들어와도 마운트되지 않는다 → 탭에 다시 들어올 때 조용히 재조회(스켈레톤 없이).

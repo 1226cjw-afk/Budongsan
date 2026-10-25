@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { monthsToLabel, daysBetweenYmd, kstDate, addYearsYmd, addDaysYmd } from "../app/lib/format.js";
+import { monthsToLabel, daysBetweenYmd, kstDate, kstYm, addYearsYmd, addDaysYmd } from "../app/lib/format.js";
 
 test("12개월 미만은 개월로", () => {
   assert.equal(monthsToLabel(1), "약 1개월");
@@ -63,6 +63,39 @@ test("kstDate: cron 실행 시각(06:00 KST)에 KST 당일이 나온다", () => 
 test("kstDate: 월·연 경계를 넘어간다", () => {
   assert.equal(kstDate(Date.parse("2026-08-31T15:00:00Z")), "2026-09-01");
   assert.equal(kstDate(Date.parse("2026-12-31T15:00:00Z")), "2027-01-01");
+});
+
+// ── kstYm: 실거래 수집 창의 기준월 ─────────────────────────────────────────
+// ⚠️ 매달 1일 06:00 KST cron(= 전날 21:00 UTC)이 새 달을 봐야 한다. 로컬 Date(UTC 서버)로 세던
+//    시절엔 여기서 지난달이 나와 1일 cron이 새 달 대신 지난달·지지난달을 재수집했다.
+test("kstYm: 매달 1일 cron 시각에 새 달이 나온다", () => {
+  assert.equal(kstYm(Date.parse("2026-10-31T21:00:00Z")), "202611");
+  assert.equal(kstYm(Date.parse("2026-12-31T21:00:00Z")), "202701");
+  assert.equal(kstYm(Date.parse("2026-11-01T14:59:59Z")), "202611"); // KST 11/1 23:59
+});
+
+// 서버 코드에서 "이번 달"을 로컬 Date로 세는 걸 막는 구조 가드 — 위 오프셋 가드의 사각지대
+// (오프셋을 더하지 않는 로컬 Date 산술)를 서버 모듈에 한해 메운다. 클라(브라우저=KST)는 대상 아님.
+test("서버 모듈은 getMonth()로 달을 세지 않는다", async () => {
+  const { readFile, readdir } = await import("node:fs/promises");
+  const serverLibs = [
+    "trades.js", "briefing.js", "marketSignal.js", "tradeReports.js", "hotRank.js",
+    "kapt.js", "applyhome.js", "lhNotice.js", "news.js",
+  ].map((f) => new URL(`../app/lib/${f}`, import.meta.url));
+  const routes = [];
+  const walk = async (dir) => {
+    for (const e of await readdir(dir, { withFileTypes: true })) {
+      const u = new URL(e.name + (e.isDirectory() ? "/" : ""), dir);
+      if (e.isDirectory()) await walk(u);
+      else if (e.name === "route.js") routes.push(u);
+    }
+  };
+  await walk(new URL("../app/api/", import.meta.url));
+  const offenders = [];
+  for (const u of [...serverLibs, ...routes]) {
+    if (/\.getMonth\(\)/.test(await readFile(u, "utf8"))) offenders.push(u.pathname.split("/app/")[1]);
+  }
+  assert.deepEqual(offenders, [], `로컬 Date로 달을 센다: ${offenders.join(", ")} — format.kstYm()을 쓸 것`);
 });
 
 // ⚠️ 오프셋을 다시 흩뿌리지 못하게 하는 구조 가드. `+ 9 * 60 * 60 * 1000`을 새로 적는

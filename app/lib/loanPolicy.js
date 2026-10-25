@@ -185,3 +185,26 @@ export function loanCalcFor(profile, assets = 0) {
     });
   };
 }
+
+// ── 자기자금(assets) 정의 — 단일 지점 ───────────────────────────────────
+// 여유 현금 + 보유 주택 매도 실수령(갈아타기: 기준가 − 대출 잔액 − 보증금).
+// ⚠️ 예전엔 지도(KakaoMap)와 🔥 오늘 탭(Briefing)이 이 정의를 **각자** 들고 있었다 — CLAUDE.md가
+//    "자금 관련 새 입력은 assets 정의 한 곳에만"이라 하는데 실제로는 두 곳이었다. 하나에 입력을
+//    더하면 다른 화면만 조용히 다른 판정을 낸다(loanCalcFor가 막은 것과 같은 계열). 2026-10-25 통합.
+// priceBasis(recent|avg) = 지도 기준가 토글. 오늘 탭엔 토글이 없어 기본(recent)을 쓴다.
+export function ownedProceeds(profile, priceBasis = "recent") {
+  const o = profile?.owned;
+  if (!o) return { salePrice: 0, net: 0 };
+  const salePrice =
+    (priceBasis === "recent" ? o.priceRecent : o.priceAvg) || o.priceRecent || o.priceAvg || 0;
+  const net = Math.max(
+    0,
+    salePrice - (Number(profile.ownedLoanBalance) || 0) - (Number(profile.ownedDeposit) || 0)
+  );
+  return { salePrice, net };
+}
+
+export function usableAssets(profile, priceBasis = "recent") {
+  if (!profile) return 0;
+  return (Number(profile.assets) || 0) + ownedProceeds(profile, priceBasis).net;
+}
