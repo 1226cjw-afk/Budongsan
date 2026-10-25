@@ -2,6 +2,56 @@
 
 ## 상태: 개발 착수 (2026-06-17 시작)
 
+## ✅ 자체 개선 — KakaoMap 3차 분리 · 버그 4건 · 응답 슬림화 (2026-10-25)
+
+요청: "자체 개선해줘 리팩토링 최적화등등 해줘".
+
+### 점검 실측
+- `KakaoMap.js` **1330줄** — 08-30에 1156줄로 깎은 뒤 다시 자랐다(세 번째). 이번엔 화면 조각이 아니라 상태 묶음
+  (자금 프로필 90줄 · ★ CRUD 85줄 · 세부 fetch 70줄 · 세대수 lazy 45줄 · 마커 동기화 95줄 · CSS 55줄 · 뒤로가기 2벌).
+- `/api/news?limit=600` 응답이 **정확히 600건** — DB의 최근 7일은 **676건**(Supabase 실측). 가장 오래된 날이 잘려
+  "최근 7일" 라벨이 거짓이었고 📢 요주의(핫플 '뉴스' 칩) 집계 모수가 줄었다. 응답 260KB 중 `fetched_at` 20KB는 클라가 안 쓰는 필드.
+- `/api/trades`(안양 동안구 601건) **148KB raw** — 거래 1건 13필드 중 지도가 읽는 건 `area·dealAmount·dealYmd·buildYear` 4개뿐.
+- prod 엣지 미스 TTFB(한국, curl): 캐시 경로 ~1.8s · `refresh=1`(국토부 재수집) **3.3~5.5s**. 이번 달 캐시 TTL 12h라
+  06:58 cron 데이터가 19시쯤 만료 → 저녁 방문마다 국토부 재수집 경로를 탔다(9/29부터 cron이 72곳 전부를 매일 돈다).
+- `trades.currentYmd()`가 `new Date().getMonth()` — Vercel(UTC)에서 **매달 1일 06:00 KST cron이 지난달을 "이번 달"로** 본다.
+  `format.test`의 KST 오프셋 가드는 "오프셋을 더하는 코드"만 잡아 이 계열(로컬 Date 산술)을 못 잡는다(CLAUDE.md에 이미 적힌 사각지대).
+- 자기자금(`assets`) 정의가 `KakaoMap.js`와 `Briefing.js`에 **두 벌** — CLAUDE.md는 "assets 정의 한 곳"이라 적고 있었다.
+- 백로그 Minor 확인: 핫플 API 500이 "신고 없음"으로 보임 · cron이 월별 실패를 count 0으로 숨김 · `PROFILE_KEY` 이중 정의 ·
+  `recordReports`가 일반 경로에서 방금 읽은 캐시를 한 번 더 조회.
+
+### 구현
+| # | 분류 | 내용 |
+|---|---|---|
+| 1 | 리팩토링 | `KakaoMap.js` 1330→**857줄**. `components/map/`에 `useMapProfile`·`useFavorites`·`useComplexDetail`·`useHouseholds`·`useBackToClose` 훅 + `markers.js`(`syncMarkers`·`MAP_CSS`) + `viewStorage.js`. 로직 변경 없음 — 원본의 코드 줄이 새 파일들에 모두 있는지 기계 대조(누락 97줄 전부 의도한 이름 변경·통합) |
+| 2 | 리팩토링 | `loanPolicy.usableAssets()`/`ownedProceeds()` — 지도·오늘 탭 공용 자기자금 정의. `PROFILE_KEY`는 `useLoanProfile` 하나로 |
+| 3 | 버그 | 뉴스 limit 600→**1000**(서버 상한) + `truncated` 플래그·경고 로그 + `fetched_at` 제거 → 649건 전부 수신 |
+| 4 | 버그 | `format.kstYm()` 신설, `currentYmd()`가 사용 · `monthsBack`을 정수 연산으로 · **서버 모듈 `getMonth()` 구조 가드** 테스트 |
+| 5 | 버그 | 핫플 API 실패 시 "불러오지 못했어요"(예전엔 "오늘 새 신고는 아직이에요") |
+| 6 | 버그 | cron `refreshRegion`이 `fetchedYmds`로 월별 실패를 `failed`·`error`로 표시(→ `hotCollect.errors`) |
+| 7 | 최적화 | `/api/trades` 거래를 `tradeStats.toClientTrade()` 4필드로 — **172KB → 69KB**(로컬 next start 측정) |
+| 8 | 최적화 | 이번 달 캐시 TTL **12h → 20h** — cron 주기를 덮어 저녁 방문의 국토부 재수집 제거. 24h 이상은 금지(주석) |
+| 9 | 최적화 | `recordReports(prevBy)` — 일반 경로는 캐시 조회 결과를 넘겨 Supabase 조회 1회 절약(refresh만 직접 조회) |
+| 10 | 관측 | `/api/trades`에 `Server-Timing: raw;dur, geo;dur` — 엣지 미스가 느릴 때 국토부/좌표 중 어디인지 |
+
+테스트 200→206(kstYm·getMonth 가드·toClientTrade·usableAssets 3종). 마이그레이션 없음.
+
+### 검증 (로컬 prod 빌드)
+- `npx next build` 통과 · `npm test` 206/206.
+- Playwright 회귀 21/21 — 데스크톱: 핀 96개·자금 색칠(ok 62/no 34)·리스트 119행·상태 줄·세대수 lazy·행 클릭→세부(+trend·complex-info)·
+  지역 전환(구로구)·저장 뷰·콘솔 오류 0 / 모바일: 행→상세(`reSheet=detail`)·뒤로가기=상세만 닫힘·⚙️(`reSheet=settings`)·뒤로가기=설정만 닫힘·
+  오늘 탭 핫플·뉴스 649건(`limit=1000`, `fetched_at` 없음)·탭 왕복 후 핀 유지·콘솔 오류 0. 딥링크 착지(구로구·상세 자동)·소비한 링크 재발동 안 함.
+- **A/B**(기존 빌드 vs 새 빌드를 같은 포트 3000에서 라운드 교차, 모바일 390×844·CPU 4x·4G 근사, 각 8회):
+  `/api/trades` 172→69KB · 다운로드 중앙값 346→**153ms** · 첫 핀 6,077→5,486ms · FCP 2,152↔2,140 · favorites→trades 출발 간격 ≈585↔578ms(동일).
+  LCP는 5,304↔5,828로 들쭉날쭉(카카오 타일 외부망 — 첫 3라운드에선 반대 방향) → 클라 회귀 없음으로 판단.
+  ⚠️ 첫 A/B(6회)에선 간격이 +260ms로 보였으나 8회 재측정에서 사라졌다 — 이 머신의 외부망 편차가 크다(TLS 0.3~2.4s 관측). 순차 측정만으로 결론 내지 말 것.
+
+### 하지 않은 것 (근거)
+- **Pretendard 자체 서빙**: 실측상 폰트 CSS는 ~600ms에 끝나고 FCP는 ~2.0s — FCP를 막는 게 아니다. 효과 대비 FOUT 위험.
+- **오늘·뉴스 패널 `next/dynamic` 분리**: 앱 코드 청크가 115KB/37KB(gz)로 전체 JS의 ~16%, 지도 탭에선 실행되지 않아
+  V8 지연 컴파일로 비용이 작다. 반면 콜드 `/news` 진입에 청크 폭포가 생긴다 — 측정상 이득이 보이면 그때.
+- RLS 정책 없음 경고 9건(Supabase advisor, INFO) — 서버가 secret 키로만 접근하는 의도된 deny-all. 미사용 `trade_cache` 테이블은 남아 있다(파괴적 작업이라 보류).
+
 ## ✅ 자체 점검 → 개선 7건 — 핫플 확정·🔥 상대 기준·엣지 캐시·SDK 선로딩·PWA (2026-10-05)
 
 요청: "자체 개선할 점 찾아봐줄래? 디자인이나 퍼포먼스나 전체적으로" → 14건 보고 → "추천순서대로 해줘".
@@ -133,7 +183,7 @@ rank 1.1→0.06 · trades 1.4→0.06 (curl, 한국). 페이지: `/api/trades` 4.
   06:58 KST → 건너뛴 지역 없음. (문서의 "68곳"은 로컬 실측 당시 숫자, 실제 대상은 72곳.) 하루치라 며칠 더 볼 것.
 - [ ] 모바일 상세 시트 머리의 단지명이 본문 제목과 중복 — 둘 중 하나를 줄일지 사용성 보고 결정.
 - [ ] 핫플 → 지도 착지 시 확대 레벨이 이전 지역 레벨 그대로(예: 8) — 복잡한 구에선 핀 찾기가 어렵다면 `setLevel(5)` 고려.
-- [ ] 리뷰 Minor(미룸): 같은 지역 focus 시 상세 history가 /news URL로 쌓일 수 있음 · 상세 연 채 🔥→뒤로 시 상세 닫힘 · recordReports가 /api/trades에 조회 1회 추가 · 가격 기준 pool 1달/2달 차이 · /api/hot 500이 "신고 없음"으로 보임 · cron이 월별 실패를 0건으로 숨김 · 데스크톱 오늘 탭에서 📍가 패널 아래 · PROFILE_KEY 이중 정의 · peek 전환 시 목록 스크롤 초기화 · 콜드 /news에서도 SDK 로드·현위치 팝업 가능
+- [ ] 리뷰 Minor(미룸): 같은 지역 focus 시 상세 history가 /news URL로 쌓일 수 있음 · 상세 연 채 🔥→뒤로 시 상세 닫힘 · ~~recordReports가 /api/trades에 조회 1회 추가~~ · 가격 기준 pool 1달/2달 차이 · ~~/api/hot 500이 "신고 없음"으로 보임~~ · ~~cron이 월별 실패를 0건으로 숨김~~ · 데스크톱 오늘 탭에서 📍가 패널 아래 · ~~PROFILE_KEY 이중 정의~~ · peek 전환 시 목록 스크롤 초기화 · 콜드 /news에서도 SDK 로드·현위치 팝업 가능 (취소선 = 2026-10-25 해결)
 
 ## ✅ 지도 초기 로딩 병렬화 — 실거래를 카카오 SDK 대기에서 분리 (2026-09-04)
 
