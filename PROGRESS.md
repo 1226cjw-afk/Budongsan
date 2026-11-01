@@ -2,6 +2,28 @@
 
 ## 상태: 개발 착수 (2026-06-17 시작)
 
+## ✅ ⚖️ 비교 탭 — 담은 단지 2~4곳 나란히 (2026-11-01)
+
+사용자 요청: "클로드에서 질의한 내용 기반으로 비교분석 가능한 화면". 앱은 claude.ai 대화를 읽을 수 없어 세 안
+(A 앱 데이터 비교 탭 / B + Claude 분석 메모 저장 / C 앱 안에서 Claude API 질의) 중 **A로 시작**하기로 사용자가 결정.
+
+### 구현
+- `lib/compare.js`(순수): 담기 목록 정리·상한(4곳, 꽉 차면 밀어내지 않음) · `summarizeComplex`(공급평 묶음·중앙값·최근가·평당가·
+  월별 추세·`/api/rank`와 같은 상승률) · `pickBasePyeong`(가장 많은 단지에 있는 평형) · `groupForPyeong`(±2평 대체) · `bestIndex`.
+- `/api/compare`(POST): 지역별 `fetchRawMonths` 15개월 **1회** + 세대수. 엣지 캐시 없음(사용자 조합).
+- `CompareView` + `compare/CompareTrendChart`(단일 Y축, 범례 + 선 끝 ①②③④ 번호 + 호버 툴팁, 팔레트는 dataviz 기본 1~4번
+  `validate_palette.js` 통과 — 대비 WARN은 표·번호로 보완) · `useCompareList` · 세부패널 ⚖️ 버튼 · 데스크톱 패널 폭
+  `tabPanelDesktopWide`(우측 세부패널 자리는 비움).
+
+### 검증 (클라우드 세션 — DB 키 없음)
+- `npm test` 215(신규 9) · `npx next build` 통과.
+- Playwright(로컬 prod 빌드, `/api/compare` 응답은 `summarizeComplex`로 만든 가짜 4곳): 1440·390 모두 가로 넘침 0,
+  모바일 차트 축 글씨가 viewBox 600 고정이면 5px대로 줄어 **실제 폭으로 그리게** 수정, 호버 툴팁·대체 평형 표기 확인.
+- ⚠️ **실데이터 확인은 아직** — PC 또는 배포 후 prod에서 실제 ★ 단지로 한 번 볼 것(세대수·12억 컷 단지의 빈 열 여부).
+
+### 다음 후보
+- B안: Claude 분석 결론(학군·교통 등 정성 평가)을 단지별 메모로 저장해 비교표 아래에 표시(Supabase 테이블 1개).
+
 ## ✅ 자체 개선 — KakaoMap 3차 분리 · 버그 4건 · 응답 슬림화 (2026-10-25)
 
 요청: "자체 개선해줘 리팩토링 최적화등등 해줘".

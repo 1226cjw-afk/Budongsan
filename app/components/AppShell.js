@@ -14,11 +14,12 @@ import KakaoMap from "./KakaoMap";
 import TabBar from "./TabBar";
 import TodayView from "./TodayView";
 import NewsList from "./NewsList";
+import CompareView from "./CompareView";
 import useIsMobile from "./useIsMobile";
 import useLoanProfile from "./useLoanProfile";
 import { classifyNews, newsPriority } from "../lib/news";
 import { countNew } from "../lib/briefingSeen";
-import { tabPanelMobile, tabPanelDesktop } from "./mapStyles";
+import { tabPanelMobile, tabPanelDesktop, tabPanelDesktopWide } from "./mapStyles";
 
 // 기사는 하루 한 번(06:30) 수집되지만 수동 수집·지연 반영이 있어 3시간이면 충분히 신선하다.
 const NEWS_MAX_AGE_MS = 3 * 60 * 60 * 1000;
@@ -29,6 +30,7 @@ export const useShell = () => useContext(ShellCtx);
 export function tabFromPath(p) {
   if (p === "/news") return "today";
   if (p && p.startsWith("/news/list")) return "news";
+  if (p && p.startsWith("/compare")) return "compare";
   return "map";
 }
 
@@ -145,7 +147,7 @@ export default function AppShell({ children }) {
     visited.has(id) && (
       <div
         style={{
-          ...(isMobile ? tabPanelMobile : tabPanelDesktop),
+          ...(isMobile ? tabPanelMobile : id === "compare" ? tabPanelDesktopWide : tabPanelDesktop),
           visibility: tab === id ? "visible" : "hidden",
           pointerEvents: tab === id ? "auto" : "none",
         }}
@@ -160,6 +162,7 @@ export default function AppShell({ children }) {
       <KakaoMap />
       {panel("today", <TodayView />)}
       {panel("news", <NewsList />)}
+      {panel("compare", <CompareView />)}
       {isMobile && <TabBar />}
       {children}
       <style>{`.news-row { transition: background 0.15s; } .news-row:hover { background: #f8fafc; }`}</style>

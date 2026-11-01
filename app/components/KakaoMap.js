@@ -21,6 +21,7 @@ import ComplexList from "./map/ComplexList";
 import DetailPanel from "./map/DetailPanel";
 import useMapProfile from "./map/useMapProfile";
 import useFavorites from "./map/useFavorites";
+import useCompareList from "./useCompareList";
 import useBackToClose from "./map/useBackToClose";
 import useComplexDetail from "./map/useComplexDetail";
 import useHouseholds from "./map/useHouseholds";
@@ -111,6 +112,7 @@ export default function KakaoMap() {
   } = useMapProfile(priceBasis);
   // ★ 즐겨찾기 — map/useFavorites.js
   const favs = useFavorites();
+  const compare = useCompareList(); // ⚖️ 비교 담기 — 비교 탭과 같은 localStorage 목록
   const { favorites, favSet } = favs;
   // 선택 단지의 평형 요약·추세·세대수 — map/useComplexDetail.js
   const { detail, trend, trendArea, setTrendArea, trendMonths, setTrendMonths, info } =
@@ -744,6 +746,11 @@ export default function KakaoMap() {
       rankMedian={rankMedian}
       isFav={isSelectedFav}
       onToggleFavorite={toggleFavorite}
+      inCompare={compare.has({ lawdCd, umdNm: selected.umdNm, aptNm: selected.aptNm })}
+      onToggleCompare={() => {
+        const r = compare.toggle({ lawdCd, umdNm: selected.umdNm, aptNm: selected.aptNm });
+        if (r.full) alert("비교는 최대 4곳까지예요. ⚖️ 비교 탭에서 하나를 빼고 담아 주세요.");
+      }}
       regulated={regulated}
       priceBasis={priceBasis}
       setPriceBasis={setPriceBasis}

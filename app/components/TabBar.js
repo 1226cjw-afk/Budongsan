@@ -15,6 +15,7 @@ export const TABS = [
   { id: "map", href: "/", icon: "🗺", label: "지도" },
   { id: "today", href: "/news", icon: "🔥", label: "오늘" },
   { id: "news", href: "/news/list", icon: "📰", label: "뉴스" },
+  { id: "compare", href: "/compare", icon: "⚖️", label: "비교" },
 ];
 
 export default function TabBar() {

@@ -383,6 +383,9 @@ export const tabPanelDesktop = {
   overflowY: "auto", background: "#f8fafc", borderRadius: 18,
   boxShadow: PANEL_SHADOW, border: GLASS_BORDER, padding: "0 14px 18px", boxSizing: "border-box",
 };
+// ⚖️ 비교 탭은 단지 2~4곳을 열로 놓아 440으론 표가 안 읽힌다 — 넓히되 우측 세부패널(right:14, width:320)
+// 자리는 비워 둔다(🗺 지도에서 → 세부패널이 열려도 표와 안 겹치게). 좁은 데스크톱에선 표가 가로 스크롤.
+export const tabPanelDesktopWide = { ...tabPanelDesktop, width: "min(760px, calc(100vw - 376px))", minWidth: 440 };
 // 탭 머리 — 56px(모바일 상단 바와 같은 높이)로 고정해 탭을 넘나들어도 상단 기준선이 안 흔들린다.
 // ⚠️ sticky라 배경을 칠해야 스크롤되는 카드가 머리 뒤로 비치지 않는다(패널 배경과 같은 색).
 export const tabHeader = {

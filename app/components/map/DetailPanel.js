@@ -43,7 +43,7 @@ function HeaderBadges({ yoy, rankMedian, rebuild }) {
 
 export default function DetailPanel({
   selected, detail, info, isMobile, onClose, regionLabel, months,
-  yoy, rankMedian, isFav, onToggleFavorite,
+  yoy, rankMedian, isFav, onToggleFavorite, inCompare, onToggleCompare,
   regulated, priceBasis, setPriceBasis, onShowHelp,
   hasProfile, onOpenProfile, excluded,
   loanForGroup, trendArea, setTrendArea, trend, trendMonths, setTrendMonths,
@@ -86,6 +86,20 @@ export default function DetailPanel({
             🔎 네이버 검색
           </a>
         </div>
+        {/* ⚖️ 비교 담기 — 비교 탭(CompareView)이 같은 localStorage 목록을 읽는다(useCompareList) */}
+        <button
+          onClick={onToggleCompare}
+          title={inCompare ? "비교에서 빼기" : "비교에 담기 (⚖️ 비교 탭)"}
+          aria-pressed={!!inCompare}
+          style={{
+            ...starBtn, fontSize: 12, fontWeight: 700, padding: "4px 7px", borderRadius: 8, marginTop: 2,
+            color: inCompare ? C.blue : C.sub,
+            background: inCompare ? C.blueSoft : "#fff",
+            border: `1px solid ${inCompare ? "#bfdbfe" : C.border}`,
+          }}
+        >
+          ⚖️ {inCompare ? "담김" : "비교"}
+        </button>
         <button onClick={onToggleFavorite} style={starBtn} title="즐겨찾기">
           {isFav ? "★" : "☆"}
         </button>

@@ -9,7 +9,7 @@
 ```bash
 npm run dev                      # http://localhost:3000 (카카오에 등록된 도메인이어야 지도가 뜸)
 npx next build                   # 컴파일·타입·prerender — 변경 검증 필수 1
-npm test                         # node:test 206개 — 변경 검증 필수 2 (린트는 이 프로젝트에 없음)
+npm test                         # node:test 215개 — 변경 검증 필수 2 (린트는 이 프로젝트에 없음)
 ```
 ⚠️ `app/`·`tests/` 편집 시 PostToolUse 훅이 `npm test`를 자동 실행한다(1.5초, `.claude/hooks/test-on-edit.js`).
 실패하면 실패한 테스트 이름·줄이 차단 사유로 돌아온다. `npx next build`는 느려서 훅에 안 넣었다 — 커밋 전 수동.
@@ -93,6 +93,13 @@ effect로 분리(`ready` → `booted`). 실측 trades 출발 1,749→**411ms**, 
 cron이 월별 실패를 0건으로 숨김 ④ 최적화: `/api/trades` 응답 **172→69KB**(거래 13필드→4, `toClientTrade`) ·
 이번 달 캐시 TTL **12h→20h**(cron이 72곳을 매일 돌아 저녁 방문마다 국토부 재호출이던 것) · 재수집 시 중복 조회 1회 제거 ·
 `Server-Timing` 헤더. 테스트 200→206. 마이그레이션 없음.
+**2026-11-01 ⚖️ 비교 탭**: 사용자 요청 "Claude로 질의하던 단지 비교를 앱 화면으로"(평촌 4곳·경희궁자이 vs 샛별한양
+비교를 대화로 해 왔다). 4번째 탭 `/compare`(`CompareView`, keep-alive) — 담은 단지 2~4곳(★ 관심 단지 칩 또는 지도 세부패널
+**⚖️ 버튼**, `useCompareList` = localStorage `re_compare_list` + `COMPARE_EVENT`)을 **같은 공급평 기준**으로 겹친 월별
+중앙값 추세 + 비교표(최근가·중앙값·평당가·거래량·1년 상승률·준공·세대수·대출·필요현금·월납·DSR·자금 여유, 줄마다 최유리 값 초록)로
+보여준다. `/api/compare`(POST, 지역별 `fetchRawMonths` 15개월 1회 + `getComplexInfoMany`) → 집계는 순수 `lib/compare.js`.
+⚠️ 상승률은 `/api/rank`와 **같은 정의**, 대출은 `loanCalcFor`+`usableAssets`·**최근 실거래가**·묶음 **최대 전용**(84.9/85.1이
+같은 34평 — 작은 쪽이면 농특세 누락). 기준 평형이 없는 단지는 ±2평 대체를 **표 머리에 드러낸다**. 테스트 206→215. 마이그레이션 없음.
 남은 백로그·세부 진척은 `PROGRESS.md`.
 
 **활용 루틴** (설계 의도 — 이 앱은 "탐색"이 아니라 "반복 확인" 도구):
